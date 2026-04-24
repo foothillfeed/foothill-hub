@@ -2578,9 +2578,9 @@ async function addRecurring() {
     if (days.length === 0) { alert('Please select at least one day.'); return; }
   }
   if (!_cache.recurring) _cache.recurring = [];
-  {
-    const _seedItems = [{ id: Date.now()+'', text, priority, freq, days, createdBy: currentUser.name, active: true });
-  });
+  const rec = { id: Date.now()+'', text: taskText, priority, freq, days, assignee, createdBy: currentUser.name, active: true };
+  _cache.recurring.push(rec);
+  await saveRecurring(rec);
   document.getElementById('rec-text').value = '';
   document.querySelectorAll('#rec-days-wrap input').forEach(cb => cb.checked = false);
   renderRecurring();
@@ -2700,10 +2700,10 @@ function detectTaskCommand(text) {
     const taskText = rest.replace(/[,.]$/,'').trim();
     if (!taskText) return null;
 
-    
-      if (!_cache.recurring) _cache.recurring = [];
-      _cache.recurring.push({ id: Date.now()+'', text: taskText, priority, freq, days, createdBy: currentUser.name, active: true });
-    });
+    if (!_cache.recurring) _cache.recurring = [];
+    const newRec = { id: Date.now()+'', text: taskText, priority, freq, days, createdBy: currentUser.name, active: true };
+    _cache.recurring.push(newRec);
+    saveRecurring(newRec); // fire and forget
     seedRecurringTasks();
     return { type: 'recurring-added', text: taskText, priority, freq, days };
   }
@@ -3115,7 +3115,6 @@ function submitSelfReview() {
       submittedAt: new Date().toISOString(),
       name: currentUser.name
     };
-  });
   renderSelfReview();
 }
 
@@ -3312,8 +3311,7 @@ function saveReview(uid) {
       notes, goals,
       savedAt: new Date().toISOString()
     });
-  });
-  alert(`Review saved for ${getUsers()[uid]?.name}. Notes are private.`);
+  alert('Review saved. Notes are private.');
   buildReviewDetail(uid);
 }
 
