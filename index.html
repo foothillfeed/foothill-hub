@@ -1359,21 +1359,43 @@ function updateDots() {
 async function pinSubmit() {
   const uid = document.getElementById('loginName').value;
   if (!uid) { showLoginError('Please select your name.'); pinBuffer=''; updateDots(); return; }
-  
-  // Fetch user from Supabase directly for login
-  showAppLoading(true);
-  const users = await sbGet('ff_users');
-  showAppLoading(false);
-  const userData = users.find(u => u.uid === uid);
-  
-  if (!userData) { showLoginError('User not found.'); pinBuffer=''; updateDots(); return; }
-  if (pinBuffer !== userData.pin) { showLoginError('Incorrect PIN. Try again.'); pinBuffer=''; updateDots(); return; }
-  
-  currentUser = { id: uid, name: userData.name, role: userData.role, pin: userData.pin, color: userData.color };
+
+  // First try local defaults (instant), then verify against Supabase
+  const localUser = DEFAULT_USERS[uid];
+  const enteredPin = pinBuffer;
   pinBuffer = '';
   updateDots();
+
+  if (!localUser) { showLoginError('User not found.'); return; }
+
+  // Check against local defaults first for instant feedback
+  if (enteredPin !== localUser.pin) {
+    // Also check Supabase in case PIN was changed
+    try {
+      showAppLoading(true);
+      const sbUsers = await sbGet('ff_users');
+      showAppLoading(false);
+      const sbUser = sbUsers.find(u => u.uid === uid);
+      if (sbUser && enteredPin === sbUser.pin) {
+        // PIN matches Supabase — update local defaults and proceed
+        DEFAULT_USERS[uid].pin = sbUser.pin;
+        currentUser = { id: uid, name: sbUser.name, role: sbUser.role, pin: sbUser.pin, color: sbUser.color };
+        document.getElementById('loginError').textContent = '';
+        launchApp();
+        return;
+      }
+      showLoginError('Incorrect PIN. Try again.');
+    } catch(e) {
+      showAppLoading(false);
+      showLoginError('Incorrect PIN. Try again.');
+    }
+    return;
+  }
+
+  // PIN matches local — proceed with login
+  currentUser = { id: uid, name: localUser.name, role: localUser.role, pin: enteredPin, color: localUser.color };
   document.getElementById('loginError').textContent = '';
-  launchApp(); // async, intentional no-await at call site
+  launchApp();
 }
 function showLoginError(msg) { document.getElementById('loginError').textContent = msg; }
 function logout() { currentUser = null; document.getElementById('loginScreen').classList.add('active'); document.getElementById('appScreen').classList.remove('active'); document.getElementById('loginName').value=''; }
