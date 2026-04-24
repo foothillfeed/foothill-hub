@@ -4027,8 +4027,12 @@ function openShiftModal(uid, dateStr, dow, existingIdx) {
   document.getElementById('shift-modal-title').textContent = existingIdx !== null ? `Edit Shift — ${name}` : `Add Shift — ${name}, ${dayName}`;
   const shifts = getShiftsForDay(uid, dateStr);
   const existing = existingIdx !== null ? shifts[existingIdx] : null;
-  document.getElementById('shift-start').value = existing?.start || STORE_HOURS[dow]?.open || '08:00';
-  document.getElementById('shift-end').value = existing?.end || STORE_HOURS[dow]?.close || '17:00';
+  // Pre-fill with availability window (not just store hours)
+  const avail = getAvailNote(uid, dow);
+  const defaultStart = existing?.start || avail.earliest || STORE_HOURS[dow]?.open || '08:00';
+  const defaultEnd = existing?.end || avail.latest || STORE_HOURS[dow]?.close || '17:00';
+  document.getElementById('shift-start').value = defaultStart;
+  document.getElementById('shift-end').value = defaultEnd;
   document.getElementById('shift-note').value = existing?.note || '';
   document.getElementById('shift-avail-warn').textContent = '';
   shiftEditState = { uid, dateStr, dow, existingIdx };
@@ -4164,7 +4168,7 @@ function renderSchedule() {
       } else if (hasPendingOff) {
         cellContent = '<div class="shift-block pending-off">Off Request…</div>';
       } else if (!avail.available) {
-        cellContent = '<div style="font-size:10px;color:#ccc;text-align:center;padding:4px;">Unavail.</div>';
+        cellContent = '<div style="font-size:10px;color:#ddd;text-align:center;padding:6px;background:#fafaf8;border-radius:4px;">Unavailable</div>';
       } else {
         shifts.forEach((s, idx) => {
           const isMine = uid === currentUser.id;
@@ -4176,8 +4180,21 @@ function renderSchedule() {
           </div>`;
         });
         if (isManager) {
-          cellContent += `<div class="add-shift-btn" onclick="openShiftModal('${uid}','${dStr}',${dow},null)">+ shift</div>`;
-          if (avail.note && shifts.length === 0) cellContent += `<div class="avail-warn">${avail.note}</div>`;
+          // Show availability window when no shift assigned yet
+          if (shifts.length === 0) {
+            const storeOpen = STORE_HOURS[dow]?.open || '08:00';
+            const storeClose = STORE_HOURS[dow]?.close || '18:30';
+            const availStart = avail.earliest || storeOpen;
+            const availEnd = avail.latest || storeClose;
+            const availColor = '#e8f0fe';
+            const availTextColor = '#3949ab';
+            cellContent += `<div style="background:${availColor};border-radius:4px;padding:4px 6px;margin-bottom:3px;cursor:pointer;" onclick="openShiftModal('${uid}','${dStr}',${dow},null)">
+              <div style="font-size:9px;color:${availTextColor};letter-spacing:.5px;text-transform:uppercase;font-weight:500;">Available</div>
+              <div style="font-size:11px;color:${availTextColor};font-weight:600;">${fmtTime12(availStart)}–${fmtTime12(availEnd)}</div>
+            </div>`;
+          } else {
+            cellContent += `<div class="add-shift-btn" onclick="openShiftModal('${uid}','${dStr}',${dow},null)">+ shift</div>`;
+          }
         }
       }
       tbody += `<td class="${isToday?'today-col':(!isOpen?'off-day':'')}">${cellContent}</td>`;
@@ -4186,6 +4203,22 @@ function renderSchedule() {
   });
   tbody += '</tbody>';
   table.innerHTML = thead + tbody;
+
+  // Add legend if manager
+  let legend = document.getElementById('sched-legend');
+  if (!legend && isManager) {
+    legend = document.createElement('div');
+    legend.id = 'sched-legend';
+    legend.style.cssText = 'display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:11px;align-items:center;';
+    legend.innerHTML = `
+      <span style="color:#888;letter-spacing:.5px;text-transform:uppercase;">Legend:</span>
+      <span style="display:flex;align-items:center;gap:5px;"><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#e8f0fe;"></span> Available window (click to add shift)</span>
+      <span style="display:flex;align-items:center;gap:5px;"><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:var(--sage);"></span> Scheduled shift</span>
+      <span style="display:flex;align-items:center;gap:5px;"><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:var(--warm);"></span> Your shift</span>
+      <span style="display:flex;align-items:center;gap:5px;"><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#fafaf8;border:1px solid #eee;"></span> Unavailable</span>
+    `;
+    document.getElementById('schedule-table').parentElement.after(legend);
+  }
 }
 
 function clearWeekSchedule() {
