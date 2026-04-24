@@ -443,6 +443,22 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
   .star-input.lit { color:var(--gold); }
   .goal-item { display:flex; gap:10px; align-items:center; padding:7px 0; border-bottom:1px solid var(--border); font-size:13px; }
   .goal-item:last-child { border-bottom:none; }
+
+  /* ── AVAILABILITY EDITOR ── */
+  .avail-grid { width:100%; border-collapse:collapse; font-size:13px; margin-bottom:16px; }
+  .avail-grid th { background:var(--dark); color:var(--gold); padding:10px 8px; text-align:center; font-size:11px; letter-spacing:1px; text-transform:uppercase; font-weight:500; }
+  .avail-grid td { border:1px solid var(--border); padding:8px; vertical-align:middle; }
+  .avail-grid td.emp-col { background:var(--dark); color:var(--cream); font-weight:500; padding:8px 12px; font-size:13px; white-space:nowrap; }
+  .avail-cell { display:flex; flex-direction:column; gap:4px; }
+  .avail-toggle { display:flex; align-items:center; gap:6px; margin-bottom:4px; }
+  .avail-toggle input[type=checkbox] { width:16px; height:16px; cursor:pointer; accent-color:var(--sage); }
+  .avail-toggle label { font-size:11px; color:#666; cursor:pointer; }
+  .avail-times { display:flex; gap:4px; align-items:center; }
+  .avail-time { font-size:11px; padding:3px 6px; border:1px solid var(--border); border-radius:4px; background:var(--cream); font-family:'DM Sans',sans-serif; width:72px; }
+  .avail-time:disabled { background:#f5f5f5; color:#ccc; }
+  .avail-times span { font-size:11px; color:#aaa; }
+  .avail-unavail { font-size:11px; color:#e57373; text-align:center; }
+  .avail-save-row { display:flex; justify-content:flex-end; gap:10px; margin-top:8px; }
 </style>
 </head>
 <body>
@@ -942,6 +958,23 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
       </div>
     </div>
 
+
+    <!-- AVAILABILITY EDITOR -->
+    <div class="page" id="page-availability">
+      <div class="card">
+        <div class="card-title">Employee Availability</div>
+        <div class="card-sub">Set each employee's available days and hours. These show on the schedule grid to help you build shifts.</div>
+        <div style="overflow-x:auto;">
+          <table class="avail-grid" id="avail-table"></table>
+        </div>
+        <div class="avail-save-row">
+          <button class="btn btn-outline" onclick="renderAvailabilityEditor()">Reset</button>
+          <button class="btn btn-primary" onclick="saveAvailability()">Save Availability</button>
+        </div>
+        <div id="avail-msg" style="font-size:13px;min-height:18px;margin-top:8px;text-align:right;"></div>
+      </div>
+    </div>
+
     <!-- TIMECLOCK -->
     <div class="page" id="page-timeclock">
       <div id="clock-display"></div>
@@ -1416,6 +1449,9 @@ async function launchApp() {
   // Load all data from Supabase — must complete before rendering
   await loadAllData(currentUser.id);
 
+  // Load availability overrides
+  await loadAvailability();
+
   // Seed recurring tasks into today
   await seedDeliveryRecurringTasks();
   await seedRecurringTasks();
@@ -1446,6 +1482,7 @@ function buildNav() {
   if (currentUser.role === 'manager') pages.push({ id:'reviews', label:'Reviews' });
   pages.push({ id:'timeclock', label:'Time Clock' });
   if (currentUser.role === 'manager' || currentUser.role === 'lead') pages.push({ id:'recurring', label:'Recurring Tasks' });
+  if (currentUser.role === 'manager' || currentUser.role === 'lead') pages.push({ id:'availability', label:'Availability' });
   pages.push({ id:'feedback', label:'Customer Log' });
   pages.push({ id:'delivery', label:'Deliveries' });
   pages.push({ id:'schedule', label:'Schedule' });
@@ -1475,6 +1512,7 @@ function showPage(id) {
     if (id==='checkout') renderCheckout();
     if (id==='timeclock') renderTimeclock();
     if (id==='schedule') renderSchedule();
+    if (id==='availability') renderAvailabilityEditor();
     if (id==='feedback') renderFeedback();
     if (id==='delivery') renderDeliveryLog();
     if (id==='timeoff') renderTimeoff();
@@ -3897,6 +3935,173 @@ function renderMgrLowStock() {
   el.innerHTML = html;
 }
 
+
+// ══════════════════════════════════════════
+// AVAILABILITY EDITOR
+// ══════════════════════════════════════════
+
+// Dynamic availability — loaded from Supabase or defaults
+// Structure: { uid: [ { days:[dow...], available:bool, earliest:'HH:MM', latest:'HH:MM', note:'' } ] }
+let _availOverrides = null; // null = not loaded yet
+
+function getAvailability() {
+  return _availOverrides || AVAILABILITY;
+}
+
+async function loadAvailability() {
+  // Try to load from Supabase ff_availability table if it exists
+  // For now use in-memory cache seeded from AVAILABILITY defaults
+  if (_availOverrides === null) {
+    // Deep copy defaults
+    _availOverrides = {};
+    Object.entries(AVAILABILITY).forEach(([uid, rules]) => {
+      _availOverrides[uid] = JSON.parse(JSON.stringify(rules));
+    });
+    // Try loading from Supabase
+    try {
+      const rows = await sbGet('ff_availability');
+      if (rows && rows.length > 0) {
+        rows.forEach(row => {
+          _availOverrides[row.uid] = row.rules || [];
+        });
+      }
+    } catch(e) {
+      // Table may not exist yet — will be created on first save
+    }
+  }
+  return _availOverrides;
+}
+
+const DAY_NAMES_FULL = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const DAYS_ORDER = [1,2,3,4,5,6,0]; // Mon–Sun
+
+function renderAvailabilityEditor() {
+  const table = document.getElementById('avail-table');
+  if (!table) return;
+  const users = getUsers();
+  const empIds = Object.keys(users).filter(u => u !== 'jeff');
+  // Jeff is manager - optional to include
+  const allEmps = ['jeff', ...empIds];
+
+  // Header
+  let thead = '<thead><tr><th style="text-align:left;">Employee</th>';
+  DAYS_ORDER.forEach(dow => {
+    thead += `<th>${DAY_NAMES_FULL[dow]}</th>`;
+  });
+  thead += '</tr></thead>';
+
+  // Body
+  let tbody = '<tbody>';
+  allEmps.forEach(uid => {
+    const user = users[uid];
+    if (!user) return;
+    tbody += `<tr><td class="emp-col" style="border-left:3px solid ${user.color}">${user.name}</td>`;
+    DAYS_ORDER.forEach(dow => {
+      const storeOpen = STORE_HOURS[dow]?.open || '08:00';
+      const storeClose = STORE_HOURS[dow]?.close || '18:30';
+      const isStoreClosed = !STORE_HOURS[dow];
+      
+      // Get current availability for this employee/day
+      const avail = getAvailNote(uid, dow);
+      const isAvail = avail.available !== false && !isStoreClosed;
+      const earliest = avail.earliest || storeOpen;
+      const latest = avail.latest || storeClose;
+
+      if (isStoreClosed) {
+        tbody += `<td style="background:#f5f5f5;text-align:center;color:#ddd;font-size:11px;">Closed</td>`;
+        return;
+      }
+
+      tbody += `<td>
+        <div class="avail-cell">
+          <div class="avail-toggle">
+            <input type="checkbox" id="avail-${uid}-${dow}" ${isAvail?'checked':''} 
+              onchange="toggleAvailDay('${uid}',${dow},this.checked)">
+            <label for="avail-${uid}-${dow}">${isAvail?'Available':'Unavailable'}</label>
+          </div>
+          <div class="avail-times" id="avail-times-${uid}-${dow}" style="display:${isAvail?'flex':'none'}">
+            <input type="time" class="avail-time" id="avail-start-${uid}-${dow}" 
+              value="${earliest}" title="Earliest start time">
+            <span>–</span>
+            <input type="time" class="avail-time" id="avail-end-${uid}-${dow}" 
+              value="${latest}" title="Latest end time">
+          </div>
+        </div>
+      </td>`;
+    });
+    tbody += '</tr>';
+  });
+  tbody += '</tbody>';
+  table.innerHTML = thead + tbody;
+}
+
+function toggleAvailDay(uid, dow, available) {
+  const timesEl = document.getElementById('avail-times-' + uid + '-' + dow);
+  const label = document.querySelector('#avail-' + uid + '-' + dow + ' + label') || 
+    document.querySelector('[for="avail-' + uid + '-' + dow + '"]');
+  if (timesEl) timesEl.style.display = available ? 'flex' : 'none';
+  if (label) label.textContent = available ? 'Available' : 'Unavailable';
+}
+
+async function saveAvailability() {
+  const users = getUsers();
+  const allEmps = Object.keys(users);
+  const msg = document.getElementById('avail-msg');
+
+  // Build new availability rules from form
+  const newAvail = {};
+  allEmps.forEach(uid => {
+    const rules = [];
+    DAYS_ORDER.forEach(dow => {
+      if (!STORE_HOURS[dow]) return; // skip closed days
+      const cb = document.getElementById('avail-' + uid + '-' + dow);
+      if (!cb) return;
+      const available = cb.checked;
+      const startEl = document.getElementById('avail-start-' + uid + '-' + dow);
+      const endEl = document.getElementById('avail-end-' + uid + '-' + dow);
+      const storeOpen = STORE_HOURS[dow]?.open || '08:00';
+      const storeClose = STORE_HOURS[dow]?.close || '18:30';
+      const earliest = startEl?.value || storeOpen;
+      const latest = endEl?.value || storeClose;
+      
+      if (!available) {
+        rules.push({ days:[dow], available:false, note:'Unavailable' });
+      } else {
+        // Only add a rule if times differ from store hours
+        if (earliest !== storeOpen || latest !== storeClose) {
+          const note = earliest !== storeOpen 
+            ? 'After ' + fmtTime12(earliest)
+            : 'Until ' + fmtTime12(latest);
+          rules.push({ days:[dow], earliest, latest, note });
+        }
+      }
+    });
+    newAvail[uid] = rules;
+  });
+
+  // Update in-memory availability
+  _availOverrides = newAvail;
+
+  // Patch the AVAILABILITY object so getAvailNote uses new data
+  Object.keys(newAvail).forEach(uid => {
+    AVAILABILITY[uid] = newAvail[uid];
+  });
+
+  // Save to Supabase
+  try {
+    for (const uid of allEmps) {
+      await sbUpsert('ff_availability', { uid, rules: newAvail[uid] });
+    }
+    if (msg) { msg.style.color = '#27ae60'; msg.textContent = '✓ Availability saved — schedule grid updated.'; }
+  } catch(e) {
+    // Table might not exist — create it via SQL first
+    if (msg) { msg.style.color = '#e07060'; msg.textContent = 'Saved locally. Database table needed — contact Jeff to set up ff_availability table.'; }
+  }
+
+  // Re-render schedule if it was open
+  renderSchedule();
+}
+
 // ══════════════════════════════════════════
 // SCHEDULING SYSTEM
 // ══════════════════════════════════════════
@@ -3947,7 +4152,7 @@ const AVAILABILITY = {
 };
 
 function getAvailNote(uid, dow) {
-  const rules = AVAILABILITY[uid] || [];
+  const rules = ((_availOverrides && _availOverrides[uid]) ? _availOverrides[uid] : AVAILABILITY[uid]) || [];
   for (const r of rules) {
     if (r.days.includes(dow)) {
       if (r.available === false) return { available: false, note: r.note };
