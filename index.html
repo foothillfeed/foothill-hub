@@ -4463,37 +4463,36 @@ function exportScheduleSheet() {
 // ── Scheduling AI Assistant ──
 let schedChatHistory = [];
 
-const SCHED_SYSTEM = `You are a scheduling assistant for Foothill Feed, a retail feed and pet supply store in Loomis, CA.
+// Build scheduling system prompt dynamically from live availability
+function buildSchedSystem() {
+  const users = getUsers();
+  const DAY_NAMES_FULL2 = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const DAYS_ORDER2 = [1,2,3,4,5,6,0];
 
-STORE HOURS:
-Monday–Friday: 8:00am–6:30pm
-Saturday: 9:00am–6:00pm
-Sunday: 9:00am–5:00pm
+  // Build availability summary from live data
+  let availLines = '';
+  Object.entries(users).forEach(([uid, user]) => {
+    const lines = [];
+    DAYS_ORDER2.forEach(dow => {
+      const avail = getAvailNote(uid, dow);
+      if (!STORE_HOURS[dow]) return; // closed day
+      const storeOpen = STORE_HOURS[dow].open;
+      const storeClose = STORE_HOURS[dow].close;
+      if (avail.available === false) {
+        lines.push(DAY_NAMES_FULL2[dow] + ': Unavailable');
+      } else if (avail.earliest || avail.latest) {
+        const start = avail.earliest || storeOpen;
+        const end = avail.latest || storeClose;
+        lines.push(DAY_NAMES_FULL2[dow] + ': ' + fmtTime12(start) + '–' + fmtTime12(end));
+      } else {
+        lines.push(DAY_NAMES_FULL2[dow] + ': Open (' + fmtTime12(storeOpen) + '–' + fmtTime12(storeClose) + ')');
+      }
+    });
+    availLines += '- ' + user.name + ' (' + user.role + '): ' + lines.join(', ') + '\n';
+  });
 
-STAFF & AVAILABILITY:
-- Jeff (owner/manager): Open availability
-- Rick (lead): Mon–Thu open to 1pm only. No Saturdays.
-- Danny (lead): Open availability, no Saturdays.
-- Maureen (lead): Open availability.
-- Kristi (staff): Mon after 4pm only. Wed after 3:30pm only.
-- Joe (staff): Fully open.
-- Max (staff): Thu–Sun after 4pm only. Not available Mon–Wed.
-- Gage (staff): Weekdays after 2:30pm only. Weekends open.
-- Blake (staff): No Mondays after 4pm. Weekdays open in mornings. Weekends open.
-- Ryan (staff): Fully open.
-
-COVERAGE RULES:
-- Minimum 2 staff on floor at all times store is open.
-- Preferred: 3 staff when possible (allows for deliveries, projects, customer service).
-- Leads or managers should be present for opening and closing.
-
-When suggesting schedules:
-- Respect all availability constraints above.
-- Try to balance hours fairly across staff.
-- Flag any gaps in coverage or availability conflicts.
-- Format shift suggestions clearly: Name: Day HH:MMam–HH:MMpm
-- Keep responses concise and practical.
-- When asked to suggest a full week, provide a day-by-day breakdown.`;
+  return 'You are a scheduling assistant for Foothill Feed, a retail feed and pet supply store in Loomis, CA.\n\nSTORE HOURS:\nMonday–Friday: 8:00am–6:30pm\nSaturday: 9:00am–6:00pm\nSunday: 9:00am–5:00pm\n\nCURRENT STAFF AVAILABILITY (live from system):\n' + availLines + '\nCOVERAGE RULES:\n- Minimum 2 staff on floor at all times store is open.\n- Preferred: 3 staff when possible (allows for deliveries, projects, customer service).\n- Leads or managers should be present for opening and closing.\n\nWhen suggesting schedules:\n- Respect all availability constraints above exactly.\n- Try to balance hours fairly across staff.\n- Flag any gaps in coverage or availability conflicts.\n- Format shift suggestions clearly: Name: Day HHam–HHpm\n- Keep responses concise and practical.\n- When asked to suggest a full week, provide a day-by-day breakdown.';
+}
 
 async function sendSchedChat() {
   const input = document.getElementById('sched-input');
@@ -4512,7 +4511,7 @@ async function sendSchedChat() {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method:'POST',
       headers:{'Content-Type':'application/json','x-api-key':getAnthropicKey(),'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,system:SCHED_SYSTEM,messages:schedChatHistory})
+      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,system:buildSchedSystem(),messages:schedChatHistory})
     });
     const data = await res.json();
     const reply = data.content?.[0]?.text || 'Sorry, try again.';
