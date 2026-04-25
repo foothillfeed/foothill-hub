@@ -1,30 +1,5 @@
 <!DOCTYPE html>
 <html lang="en">
-      <!-- TIMECLOCK EDITOR -->
-      <div class="card">
-        <div class="card-title">✏️ Edit Time Clock Entries</div>
-        <div class="card-sub">Correct clock in/out times and breaks for any employee</div>
-        <div class="tc-edit-filter">
-          <select class="form-select" id="tc-edit-emp" style="width:auto;" onchange="renderTimeclockEditor(true)">
-            <option value="all">All Employees</option>
-            <option value="jeff">Jeff</option>
-            <option value="rick">Rick</option>
-            <option value="danny">Danny</option>
-            <option value="maureen">Maureen</option>
-            <option value="kristi">Kristi</option>
-            <option value="joe">Joe</option>
-            <option value="max">Max</option>
-            <option value="gage">Gage</option>
-            <option value="blake">Blake</option>
-            <option value="ryan">Ryan</option>
-          </select>
-          <input type="date" class="form-input" id="tc-edit-date" style="width:auto;" onchange="renderTimeclockEditor(true)">
-          <button class="btn btn-primary btn-sm" onclick="renderTimeclockEditor(true)">Load</button>
-        </div>
-        <div id="tc-edit-list"><div class="empty-state">Select an employee and date above to load time entries.</div></div>
-      </div>
-
-
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1030,13 +1005,14 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
         <button class="btn btn-outline btn-sm" onclick="openSummary()">📋 View Weekly Summary</button>
       </div>
       <div class="stat-grid" id="mgr-stats"></div>
+      <div class="card">
 
       <!-- TIMECLOCK EDITOR -->
       <div class="card">
-        <div class="card-title">✏️ Edit Time Clock Entries</div>
+        <div class="card-title">Edit Time Clock Entries</div>
         <div class="card-sub">Correct clock in/out times and breaks for any employee</div>
         <div class="tc-edit-filter">
-          <select class="form-select" id="tc-edit-emp" style="width:auto;" onchange="renderTimeclockEditor(true)">
+          <select class="form-select" id="tc-edit-emp" style="width:auto;" onchange="renderTimeclockEditor()">
             <option value="all">All Employees</option>
             <option value="jeff">Jeff</option>
             <option value="rick">Rick</option>
@@ -1049,13 +1025,12 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
             <option value="blake">Blake</option>
             <option value="ryan">Ryan</option>
           </select>
-          <input type="date" class="form-input" id="tc-edit-date" style="width:auto;" onchange="renderTimeclockEditor(true)">
-          <button class="btn btn-primary btn-sm" onclick="renderTimeclockEditor(true)">Load</button>
+          <input type="date" class="form-input" id="tc-edit-date" style="width:auto;" onchange="renderTimeclockEditor()">
+          <button class="btn btn-outline btn-sm" onclick="renderTimeclockEditor()">Filter</button>
         </div>
-        <div id="tc-edit-list"><div class="empty-state">Select an employee and date above, then click Load.</div></div>
+        <div id="tc-edit-list"></div>
       </div>
 
-      <div class="card">
         <div class="card-title">Low Stock Alerts</div>
         <div class="card-sub">Flagged by staff — mark resolved once ordered</div>
         <div id="mgr-low-stock"></div>
@@ -1097,8 +1072,6 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
         </div>
         <div id="timesheet-table-wrap"></div>
       </div>
-
-
     </div>
 
     <!-- SETTINGS -->
@@ -1571,7 +1544,7 @@ function showPage(id) {
     pg.classList.add('active');
     if (id==='tasks') { renderTasks(); renderLowStockMyFlags(); }
     if (id==='training') renderTraining();
-    if (id==='manager') { renderManager(); initTimesheetDates(); renderTimesheet(); renderAnalytics(); renderMgrLowStock(); initTcEditDate(); }
+    if (id==='manager') { renderManager(); initTimesheetDates(); renderTimesheet(); renderAnalytics(); renderMgrLowStock(); initTcEditDate(); renderTimeclockEditor(); }
     if (id==='self-review') renderSelfReview();
     if (id==='reviews') renderReviewsPage();
     if (id==='checkin') renderCheckin();
@@ -4054,16 +4027,12 @@ function renderMgrLowStock() {
 // TIMECLOCK EDITOR (Manager)
 // ══════════════════════════════════════════
 
-function renderTimeclockEditor(autoLoad) {
+function renderTimeclockEditor() {
   const el = document.getElementById('tc-edit-list');
   if (!el) return;
 
   const empFilter = document.getElementById('tc-edit-emp')?.value || 'all';
   const dateFilter = document.getElementById('tc-edit-date')?.value || '';
-  
-  // Don't auto-render empty state on page load — wait for user to click Load
-  if (!autoLoad && !empFilter && !dateFilter) return;
-
   const entries = (_cache.timeEntries || []).filter(e => {
     if (empFilter !== 'all' && e.uid !== empFilter) return false;
     if (dateFilter && e.date !== dateFilter) return false;
