@@ -2658,18 +2658,25 @@ function exportShiftsCSV() {
   const filtered = getFilteredEntries();
   const dateStr = new Date().toISOString().split('T')[0];
 
-  const header = ['Date','Day','Employee','Clock In','Clock Out','Regular Hours','Rest Breaks Taken','Meal Breaks Taken','Meal Waiver','CA Compliance'];
+  const header = ['Date','Day','Employee','Clock In','Clock Out','Regular Hrs (≤8)','Daily OT 1.5x (8-12h)','Daily OT 2x (>12h)','Total Hrs','Rest Breaks','Meal Breaks','Meal Waiver','CA Notes'];
   const rows = filtered.map(e => {
     const worked = e.totalMinutes || calcWorkedMinutes(e);
     const workedH = (worked/60).toFixed(2);
     const restBreaks = (e.breaks||[]).filter(b=>b.back).length;
     const mealBreaks = (e.mealBreaks||[]).filter(b=>b.back).length;
     const dayName = e.date ? new Date(e.date + 'T12:00:00').toLocaleDateString('en-US',{weekday:'long'}) : '';
+    // CA daily OT breakdown per shift
+    const dailyOT15 = Math.max(0, Math.min(worked, 720) - 480) / 60; // 8-12 hrs
+    const dailyOT2 = Math.max(0, worked - 720) / 60;                  // >12 hrs
+    const regularH = Math.min(worked, 480) / 60;
+
     const issues = [];
-    if (worked >= 300 && mealBreaks === 0 && !e.waiverSigned) issues.push('Missing meal break');
-    if (worked >= 600 && mealBreaks < 2) issues.push('Missing 2nd meal break');
-    if (worked > 480 && restBreaks < 2) issues.push('Check rest breaks');
+    if (worked >= 480) issues.push('Daily OT');
+    if (worked >= 720) issues.push('Double OT');
+    if (worked >= 300 && mealBreaks === 0 && !e.waiverSigned) issues.push('No meal break');
+    if (worked >= 600 && mealBreaks < 2) issues.push('Missing 2nd meal');
     return [e.date, dayName, e.name||'', fmtTime(e.clockIn), fmtTime(e.clockOut),
+      regularH.toFixed(2), dailyOT15.toFixed(2), dailyOT2.toFixed(2),
       workedH, restBreaks, mealBreaks, e.waiverSigned?'Yes':'No',
       issues.length>0 ? issues.join('; ') : 'OK'
     ].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',');
@@ -2682,55 +2689,113 @@ function exportSummaryCSV() {
   const filtered = getFilteredEntries();
   const dateStr = new Date().toISOString().split('T')[0];
 
-  // Group by employee, then by week (Mon-Sun)
-  const weekData = {}; // uid -> week -> { mins, days }
+  // ── California Overtime Rules ──
+  // Daily:  >8 hrs  = 1.5x  |  >12 hrs = 2x
+  // Weekly: >40 hrs = 1.5x  (but don't double-count hours already counted as daily OT)
+  // 7th consecutive day in workweek: first 8 hrs = 1.5x, >8 hrs = 2x
+
+  // Group by employee → week → days
+  const weekData = {}; // uid -> weekKey -> { entries:[], name }
 
   filtered.forEach(e => {
     const uid = e.uid;
     const worked = e.totalMinutes || calcWorkedMinutes(e);
     if (!worked) return;
 
-    // Get Monday of the week for this entry
     const d = new Date(e.date + 'T12:00:00');
-    const dow = d.getDay(); // 0=Sun
+    const dow = d.getDay(); // 0=Sun, 1=Mon...
     const monday = new Date(d);
     monday.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
     const weekKey = monday.toISOString().split('T')[0];
 
     if (!weekData[uid]) weekData[uid] = {};
-    if (!weekData[uid][weekKey]) weekData[uid][weekKey] = { mins: 0, days: [], name: e.name || uid };
-    weekData[uid][weekKey].mins += worked;
-    weekData[uid][weekKey].days.push(e.date);
+    if (!weekData[uid][weekKey]) weekData[uid][weekKey] = { entries: [], name: e.name || uid };
+    weekData[uid][weekKey].entries.push({ date: e.date, mins: worked, dow });
   });
 
-  const header = ['Employee','Week Starting (Mon)','Week Ending (Sun)','Days Worked','Regular Hours (≤40)','Overtime Hours (>40)','Total Hours','OT Flag'];
+  const header = [
+    'Employee','Week Starting (Mon)','Week Ending (Sun)','Days Worked',
+    'Regular Hours','Daily OT (1.5x)','Daily Double OT (2x)','Weekly OT (1.5x)',
+    'Total Hours','Total OT Hours','Flags'
+  ];
   const rows = [];
 
   Object.entries(weekData).forEach(([uid, weeks]) => {
-    Object.entries(weeks).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([weekStart, data]) => {
+    Object.entries(weeks).sort((a,b) => a[0].localeCompare(b[0])).forEach(([weekStart, data]) => {
       const sunday = new Date(weekStart + 'T12:00:00');
       sunday.setDate(sunday.getDate() + 6);
       const weekEnd = sunday.toISOString().split('T')[0];
 
-      const totalHrs = data.mins / 60;
-      const regularHrs = Math.min(totalHrs, 40);
-      const overtimeHrs = Math.max(0, totalHrs - 40);
-      const otFlag = overtimeHrs > 0 ? '⚠ OVERTIME' : '';
+      // Sort entries by date within the week
+      const entries = data.entries.slice().sort((a,b) => a.date.localeCompare(b.date));
+      const daysWorked = entries.length;
+
+      let regularMins = 0;
+      let dailyOT15Mins = 0;    // daily 1.5x (8-12 hrs)
+      let dailyOT2Mins = 0;     // daily 2x (>12 hrs)
+      let weeklyOT15Mins = 0;   // weekly 1.5x (>40 hrs total, not already daily OT)
+      const flags = [];
+
+      let weeklyRegularAccum = 0; // track regular mins for weekly OT calc
+
+      entries.forEach((e, idx) => {
+        const isSeventhDay = daysWorked >= 7 && idx === 6;
+        const mins = e.mins;
+        const hrs = mins / 60;
+
+        let entryRegular = 0;
+        let entryDailyOT15 = 0;
+        let entryDailyOT2 = 0;
+
+        if (isSeventhDay) {
+          // 7th consecutive day: 1.5x for first 8hrs, 2x after
+          entryDailyOT15 = Math.min(mins, 480);      // first 8hrs at 1.5x
+          entryDailyOT2 = Math.max(0, mins - 480);   // over 8hrs at 2x
+          flags.push('7th day rule');
+        } else {
+          // Normal day: regular up to 8hrs, 1.5x 8-12hrs, 2x over 12hrs
+          entryRegular = Math.min(mins, 480);
+          entryDailyOT15 = Math.max(0, Math.min(mins, 720) - 480); // 8-12hrs
+          entryDailyOT2 = Math.max(0, mins - 720);                  // >12hrs
+        }
+
+        // Check for daily OT flags
+        if (hrs > 12) flags.push(e.date + ': double OT (' + hrs.toFixed(1) + 'h)');
+        else if (hrs > 8) flags.push(e.date + ': daily OT (' + hrs.toFixed(1) + 'h)');
+
+        regularMins += entryRegular;
+        dailyOT15Mins += entryDailyOT15;
+        dailyOT2Mins += entryDailyOT2;
+        weeklyRegularAccum += entryRegular;
+      });
+
+      // Weekly OT: regular hours beyond 40 (480 mins) not already counted as daily OT
+      if (weeklyRegularAccum > 2400) {
+        weeklyOT15Mins = weeklyRegularAccum - 2400;
+        regularMins = regularMins - weeklyOT15Mins;
+        flags.push('Weekly OT');
+      }
+
+      const totalMins = entries.reduce((s, e) => s + e.mins, 0);
+      const totalOTMins = dailyOT15Mins + dailyOT2Mins + weeklyOT15Mins;
 
       rows.push([
         data.name,
         weekStart,
         weekEnd,
-        data.days.length,
-        regularHrs.toFixed(2),
-        overtimeHrs.toFixed(2),
-        totalHrs.toFixed(2),
-        otFlag
-      ].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(','));
+        daysWorked,
+        (regularMins / 60).toFixed(2),
+        (dailyOT15Mins / 60).toFixed(2),
+        (dailyOT2Mins / 60).toFixed(2),
+        (weeklyOT15Mins / 60).toFixed(2),
+        (totalMins / 60).toFixed(2),
+        (totalOTMins / 60).toFixed(2),
+        flags.length > 0 ? flags.join(' | ') : 'None'
+      ].map(v => '"' + String(v).replace(/"/g, '""') + '"').join(','));
     });
   });
 
-  downloadCSV([header.join(','), ...rows].join('\n'), `FoothillFeed_Summary_${dateStr}.csv`);
+  downloadCSV([header.join(','), ...rows].join('\n'), 'FoothillFeed_CA_Summary_' + dateStr + '.csv');
 }
 
 // Set default date range for timesheet filter (current week)
