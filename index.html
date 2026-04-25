@@ -4356,23 +4356,29 @@ function renderSchedule() {
     mgrEl.innerHTML = '';
   }
 
-  // Hours summary
+  // Hours summary — managers and leads only
   const users = getUsers();
   const empIds = Object.keys(users).filter(u => u !== 'jeff' || currentUser.id === 'jeff');
   const hoursEl = document.getElementById('hours-summary');
-  let hoursHtml = '';
-  empIds.forEach(uid => {
-    let totalMins = 0;
-    dates.forEach(d => {
-      const shifts = getShiftsForDay(uid, dateKey(d));
-      shifts.forEach(s => { totalMins += shiftMins(s.start, s.end); });
+  if (isManager) {
+    let hoursHtml = '';
+    empIds.forEach(uid => {
+      let totalMins = 0;
+      dates.forEach(d => {
+        const shifts = getShiftsForDay(uid, dateKey(d));
+        shifts.forEach(s => { totalMins += shiftMins(s.start, s.end); });
+      });
+      if (totalMins > 0) {
+        const hrs = (totalMins/60).toFixed(1);
+        hoursHtml += `<div class="hours-chip">${users[uid]?.name}: <strong>${hrs}h</strong></div>`;
+      }
     });
-    if (totalMins > 0 || currentUser.id === uid) {
-      const hrs = (totalMins/60).toFixed(1);
-      hoursHtml += `<div class="hours-chip">${users[uid]?.name}: <strong>${hrs}h</strong></div>`;
-    }
-  });
-  hoursEl.innerHTML = hoursHtml;
+    hoursEl.innerHTML = hoursHtml;
+    hoursEl.style.display = 'flex';
+  } else {
+    hoursEl.innerHTML = '';
+    hoursEl.style.display = 'none';
+  }
 
   // Build table
   const table = document.getElementById('schedule-table');
