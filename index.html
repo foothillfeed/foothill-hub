@@ -459,6 +459,20 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
   .avail-times span { font-size:11px; color:#aaa; }
   .avail-unavail { font-size:11px; color:#e57373; text-align:center; }
   .avail-save-row { display:flex; justify-content:flex-end; gap:10px; margin-top:8px; }
+
+  /* ── TIMECLOCK EDITOR ── */
+  .tc-edit-card { background:white; border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:10px; }
+  .tc-edit-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px; }
+  .tc-edit-name { font-weight:500; font-size:14px; }
+  .tc-edit-date { font-size:12px; color:#888; }
+  .tc-edit-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px; }
+  .tc-edit-label { font-size:12px; color:#666; min-width:90px; }
+  .tc-time-input { padding:6px 10px; border:1px solid var(--border); border-radius:6px; font-family:'DM Sans',sans-serif; font-size:13px; background:var(--cream); width:120px; }
+  .tc-break-group { background:var(--light); border-radius:8px; padding:10px 12px; margin-bottom:8px; }
+  .tc-break-title { font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:#888; margin-bottom:8px; font-weight:500; }
+  .tc-add-break { font-size:12px; color:var(--warm); cursor:pointer; background:none; border:1px dashed var(--border); border-radius:6px; padding:4px 12px; font-family:'DM Sans',sans-serif; }
+  .tc-del-break { font-size:11px; color:#e07060; cursor:pointer; background:none; border:none; padding:2px 6px; }
+  .tc-edit-filter { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; align-items:center; }
 </style>
 </head>
 <body>
@@ -1033,6 +1047,30 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
         </div>
         <div id="timesheet-table-wrap"></div>
       </div>
+
+      <!-- TIMECLOCK EDITOR -->
+      <div class="card">
+        <div class="card-title">Edit Time Clock Entries</div>
+        <div class="card-sub">Correct clock in/out times and breaks for any employee</div>
+        <div class="tc-edit-filter">
+          <select class="form-select" id="tc-edit-emp" style="width:auto;" onchange="renderTimeclockEditor()">
+            <option value="all">All Employees</option>
+            <option value="jeff">Jeff</option>
+            <option value="rick">Rick</option>
+            <option value="danny">Danny</option>
+            <option value="maureen">Maureen</option>
+            <option value="kristi">Kristi</option>
+            <option value="joe">Joe</option>
+            <option value="max">Max</option>
+            <option value="gage">Gage</option>
+            <option value="blake">Blake</option>
+            <option value="ryan">Ryan</option>
+          </select>
+          <input type="date" class="form-input" id="tc-edit-date" style="width:auto;" onchange="renderTimeclockEditor()">
+          <button class="btn btn-outline btn-sm" onclick="renderTimeclockEditor()">Filter</button>
+        </div>
+        <div id="tc-edit-list"></div>
+      </div>
     </div>
 
     <!-- SETTINGS -->
@@ -1505,7 +1543,7 @@ function showPage(id) {
     pg.classList.add('active');
     if (id==='tasks') { renderTasks(); renderLowStockMyFlags(); }
     if (id==='training') renderTraining();
-    if (id==='manager') { renderManager(); initTimesheetDates(); renderTimesheet(); renderAnalytics(); renderMgrLowStock(); }
+    if (id==='manager') { renderManager(); initTimesheetDates(); renderTimesheet(); renderAnalytics(); renderMgrLowStock(); initTcEditDate(); renderTimeclockEditor(); }
     if (id==='self-review') renderSelfReview();
     if (id==='reviews') renderReviewsPage();
     if (id==='checkin') renderCheckin();
@@ -2622,6 +2660,11 @@ function exportTimesheet() {
 }
 
 // Set default date range for timesheet filter (current week)
+function initTcEditDate() {
+  const el = document.getElementById('tc-edit-date');
+  if (el) el.value = new Date().toISOString().split('T')[0];
+}
+
 function initTimesheetDates() {
   const today = new Date();
   const dow = today.getDay();
@@ -3977,6 +4020,166 @@ function renderMgrLowStock() {
   el.innerHTML = html;
 }
 
+
+
+// ══════════════════════════════════════════
+// TIMECLOCK EDITOR (Manager)
+// ══════════════════════════════════════════
+
+function renderTimeclockEditor() {
+  const el = document.getElementById('tc-edit-list');
+  if (!el) return;
+
+  const empFilter = document.getElementById('tc-edit-emp')?.value || 'all';
+  const dateFilter = document.getElementById('tc-edit-date')?.value || '';
+  const entries = (_cache.timeEntries || []).filter(e => {
+    if (empFilter !== 'all' && e.uid !== empFilter) return false;
+    if (dateFilter && e.date !== dateFilter) return false;
+    return e.clockIn; // only show entries where someone actually clocked in
+  }).sort((a,b) => b.date.localeCompare(a.date) || a.uid.localeCompare(b.uid));
+
+  if (entries.length === 0) {
+    el.innerHTML = '<div class="empty-state">No time entries found for the selected filter.</div>';
+    return;
+  }
+
+  const users = getUsers();
+  el.innerHTML = entries.map(e => {
+    const worked = calcWorkedMinutes(e);
+    const breaksHtml = (e.breaks || []).map((b, i) => `
+      <div class="tc-edit-row" style="margin-left:8px;">
+        <span class="tc-edit-label" style="color:#f57f17;">Rest Break ${i+1}</span>
+        <input type="datetime-local" class="tc-time-input" id="tc-rb-out-${e.uid}-${e.date}-${i}"
+          value="${b.out ? toDatetimeLocal(b.out) : ''}" style="width:150px;">
+        <span style="font-size:12px;color:#aaa;">→</span>
+        <input type="datetime-local" class="tc-time-input" id="tc-rb-back-${e.uid}-${e.date}-${i}"
+          value="${b.back ? toDatetimeLocal(b.back) : ''}" style="width:150px;">
+        <button class="tc-del-break" onclick="deleteBreak('${e.uid}','${e.date}',${i},'rest')">✕ Remove</button>
+      </div>`).join('');
+
+    const mealBreaksHtml = (e.mealBreaks || []).map((b, i) => `
+      <div class="tc-edit-row" style="margin-left:8px;">
+        <span class="tc-edit-label" style="color:#e91e63;">Meal Break ${i+1}</span>
+        <input type="datetime-local" class="tc-time-input" id="tc-mb-out-${e.uid}-${e.date}-${i}"
+          value="${b.out ? toDatetimeLocal(b.out) : ''}" style="width:150px;">
+        <span style="font-size:12px;color:#aaa;">→</span>
+        <input type="datetime-local" class="tc-time-input" id="tc-mb-back-${e.uid}-${e.date}-${i}"
+          value="${b.back ? toDatetimeLocal(b.back) : ''}" style="width:150px;">
+        <button class="tc-del-break" onclick="deleteBreak('${e.uid}','${e.date}',${i},'meal')">✕ Remove</button>
+      </div>`).join('');
+
+    return `
+      <div class="tc-edit-card">
+        <div class="tc-edit-header">
+          <div>
+            <span class="tc-edit-name">${users[e.uid]?.name || e.uid}</span>
+            <span class="tc-edit-date"> · ${e.date}</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <span style="font-size:12px;color:var(--sage);font-weight:500;">${(worked/60).toFixed(2)} hrs worked</span>
+            <button class="btn btn-sm btn-primary" onclick="saveTimeclockEdit('${e.uid}','${e.date}')">Save Changes</button>
+          </div>
+        </div>
+
+        <div class="tc-edit-row">
+          <span class="tc-edit-label">Clock In</span>
+          <input type="datetime-local" class="tc-time-input" id="tc-in-${e.uid}-${e.date}"
+            value="${e.clockIn ? toDatetimeLocal(e.clockIn) : ''}" style="width:180px;">
+          <span class="tc-edit-label" style="margin-left:16px;">Clock Out</span>
+          <input type="datetime-local" class="tc-time-input" id="tc-out-${e.uid}-${e.date}"
+            value="${e.clockOut ? toDatetimeLocal(e.clockOut) : ''}" style="width:180px;">
+        </div>
+
+        ${(e.breaks||[]).length > 0 || (e.mealBreaks||[]).length > 0 ? `
+        <div class="tc-break-group">
+          <div class="tc-break-title">Breaks</div>
+          ${breaksHtml}
+          ${mealBreaksHtml}
+        </div>` : ''}
+
+        <div style="display:flex;gap:8px;margin-top:4px;">
+          <button class="tc-add-break" onclick="addBreakToEntry('${e.uid}','${e.date}','rest')">+ Add Rest Break</button>
+          <button class="tc-add-break" onclick="addBreakToEntry('${e.uid}','${e.date}','meal')">+ Add Meal Break</button>
+        </div>
+
+        <div id="tc-msg-${e.uid}-${e.date}" style="font-size:12px;min-height:16px;margin-top:8px;"></div>
+      </div>`;
+  }).join('');
+}
+
+function toDatetimeLocal(isoString) {
+  if (!isoString) return '';
+  const d = new Date(isoString);
+  const pad = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function fromDatetimeLocal(val) {
+  if (!val) return null;
+  return new Date(val).toISOString();
+}
+
+async function saveTimeclockEdit(uid, date) {
+  const entry = (_cache.timeEntries || []).find(e => e.uid === uid && e.date === date);
+  if (!entry) return;
+
+  const clockIn = fromDatetimeLocal(document.getElementById('tc-in-' + uid + '-' + date)?.value);
+  const clockOut = fromDatetimeLocal(document.getElementById('tc-out-' + uid + '-' + date)?.value);
+
+  entry.clockIn = clockIn;
+  entry.clockOut = clockOut;
+
+  // Update rest breaks
+  (entry.breaks || []).forEach((b, i) => {
+    const outVal = document.getElementById('tc-rb-out-' + uid + '-' + date + '-' + i)?.value;
+    const backVal = document.getElementById('tc-rb-back-' + uid + '-' + date + '-' + i)?.value;
+    b.out = fromDatetimeLocal(outVal) || b.out;
+    b.back = fromDatetimeLocal(backVal) || b.back;
+  });
+
+  // Update meal breaks
+  (entry.mealBreaks || []).forEach((b, i) => {
+    const outVal = document.getElementById('tc-mb-out-' + uid + '-' + date + '-' + i)?.value;
+    const backVal = document.getElementById('tc-mb-back-' + uid + '-' + date + '-' + i)?.value;
+    b.out = fromDatetimeLocal(outVal) || b.out;
+    b.back = fromDatetimeLocal(backVal) || b.back;
+  });
+
+  // Recalculate total minutes
+  entry.totalMinutes = calcWorkedMinutes(entry);
+
+  await saveTimeEntry(entry);
+
+  const msg = document.getElementById('tc-msg-' + uid + '-' + date);
+  if (msg) { msg.style.color = '#2e7d32'; msg.textContent = '✓ Saved — ' + (entry.totalMinutes/60).toFixed(2) + ' hrs recalculated.'; }
+  renderTimeclockEditor();
+  renderTimesheet();
+}
+
+function addBreakToEntry(uid, date, type) {
+  const entry = (_cache.timeEntries || []).find(e => e.uid === uid && e.date === date);
+  if (!entry) return;
+  const newBreak = { out: new Date().toISOString(), back: null };
+  if (type === 'rest') {
+    if (!entry.breaks) entry.breaks = [];
+    entry.breaks.push(newBreak);
+  } else {
+    if (!entry.mealBreaks) entry.mealBreaks = [];
+    entry.mealBreaks.push(newBreak);
+  }
+  renderTimeclockEditor();
+}
+
+function deleteBreak(uid, date, idx, type) {
+  const entry = (_cache.timeEntries || []).find(e => e.uid === uid && e.date === date);
+  if (!entry) return;
+  if (type === 'rest') {
+    entry.breaks.splice(idx, 1);
+  } else {
+    entry.mealBreaks.splice(idx, 1);
+  }
+  renderTimeclockEditor();
+}
 
 // ══════════════════════════════════════════
 // AVAILABILITY EDITOR
