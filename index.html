@@ -2624,40 +2624,112 @@ function renderTimesheet() {
   </table>`;
 }
 
-function exportTimesheet() {
+function downloadCSV(csvContent, filename) {
+  const blob = new Blob([csvContent], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function getFilteredEntries() {
   const entries = _cache.timeEntries || [];
   const empFilter = document.getElementById('ts-employee')?.value || 'all';
   const fromDate = document.getElementById('ts-from')?.value || '';
   const toDate = document.getElementById('ts-to')?.value || '';
-
-  let filtered = entries.filter(e => {
+  return entries.filter(e => {
     if (empFilter !== 'all' && e.uid !== empFilter) return false;
     if (fromDate && e.date < fromDate) return false;
     if (toDate && e.date > toDate) return false;
     return true;
-  }).sort((a,b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
+  }).sort((a,b) => a.date.localeCompare(b.date) || (a.name||'').localeCompare(b.name||''));
+}
 
-  const header = ['Date','Employee','Clock In','Clock Out','Hours Worked','Rest Breaks','Meal Breaks','Meal Waiver Signed','CA Compliance Notes'];
+function exportTimesheet() {
+  // Export both tabs
+  exportShiftsCSV();
+  setTimeout(exportSummaryCSV, 500);
+}
+
+function exportShiftsCSV() {
+  const filtered = getFilteredEntries();
+  const dateStr = new Date().toISOString().split('T')[0];
+
+  const header = ['Date','Day','Employee','Clock In','Clock Out','Regular Hours','Rest Breaks Taken','Meal Breaks Taken','Meal Waiver','CA Compliance'];
   const rows = filtered.map(e => {
     const worked = e.totalMinutes || calcWorkedMinutes(e);
     const workedH = (worked/60).toFixed(2);
     const restBreaks = (e.breaks||[]).filter(b=>b.back).length;
     const mealBreaks = (e.mealBreaks||[]).filter(b=>b.back).length;
+    const dayName = e.date ? new Date(e.date + 'T12:00:00').toLocaleDateString('en-US',{weekday:'long'}) : '';
     const issues = [];
-    if (worked >= 300 && mealBreaks === 0 && !e.waiverSigned) issues.push('No meal break');
+    if (worked >= 300 && mealBreaks === 0 && !e.waiverSigned) issues.push('Missing meal break');
     if (worked >= 600 && mealBreaks < 2) issues.push('Missing 2nd meal break');
-    return [e.date, e.name, fmtTime(e.clockIn), fmtTime(e.clockOut), workedH, restBreaks, mealBreaks, e.waiverSigned?'Yes':'No', issues.length>0?issues.join('; '):'OK'].map(v=>`"${v}"`).join(',');
+    if (worked > 480 && restBreaks < 2) issues.push('Check rest breaks');
+    return [e.date, dayName, e.name||'', fmtTime(e.clockIn), fmtTime(e.clockOut),
+      workedH, restBreaks, mealBreaks, e.waiverSigned?'Yes':'No',
+      issues.length>0 ? issues.join('; ') : 'OK'
+    ].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',');
   });
 
-  const csv = [header.join(','), ...rows].join('\n');
-  const blob = new Blob([csv], {type:'text/csv'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
+  downloadCSV([header.join(','), ...rows].join('\n'), `FoothillFeed_Shifts_${dateStr}.csv`);
+}
+
+function exportSummaryCSV() {
+  const filtered = getFilteredEntries();
   const dateStr = new Date().toISOString().split('T')[0];
-  a.download = `FoothillFeed_Timesheets_${dateStr}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+
+  // Group by employee, then by week (Mon-Sun)
+  const weekData = {}; // uid -> week -> { mins, days }
+
+  filtered.forEach(e => {
+    const uid = e.uid;
+    const worked = e.totalMinutes || calcWorkedMinutes(e);
+    if (!worked) return;
+
+    // Get Monday of the week for this entry
+    const d = new Date(e.date + 'T12:00:00');
+    const dow = d.getDay(); // 0=Sun
+    const monday = new Date(d);
+    monday.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
+    const weekKey = monday.toISOString().split('T')[0];
+
+    if (!weekData[uid]) weekData[uid] = {};
+    if (!weekData[uid][weekKey]) weekData[uid][weekKey] = { mins: 0, days: [], name: e.name || uid };
+    weekData[uid][weekKey].mins += worked;
+    weekData[uid][weekKey].days.push(e.date);
+  });
+
+  const header = ['Employee','Week Starting (Mon)','Week Ending (Sun)','Days Worked','Regular Hours (≤40)','Overtime Hours (>40)','Total Hours','OT Flag'];
+  const rows = [];
+
+  Object.entries(weekData).forEach(([uid, weeks]) => {
+    Object.entries(weeks).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([weekStart, data]) => {
+      const sunday = new Date(weekStart + 'T12:00:00');
+      sunday.setDate(sunday.getDate() + 6);
+      const weekEnd = sunday.toISOString().split('T')[0];
+
+      const totalHrs = data.mins / 60;
+      const regularHrs = Math.min(totalHrs, 40);
+      const overtimeHrs = Math.max(0, totalHrs - 40);
+      const otFlag = overtimeHrs > 0 ? '⚠ OVERTIME' : '';
+
+      rows.push([
+        data.name,
+        weekStart,
+        weekEnd,
+        data.days.length,
+        regularHrs.toFixed(2),
+        overtimeHrs.toFixed(2),
+        totalHrs.toFixed(2),
+        otFlag
+      ].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(','));
+    });
+  });
+
+  downloadCSV([header.join(','), ...rows].join('\n'), `FoothillFeed_Summary_${dateStr}.csv`);
 }
 
 // Set default date range for timesheet filter (current week)
