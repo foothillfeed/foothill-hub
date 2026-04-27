@@ -1177,6 +1177,86 @@ function checkAnthropicKey() {
   }
 }
 
+
+// ══════════════════════════════════════════
+// AUTO-LOGOUT AFTER 2 MINUTES INACTIVITY
+// ══════════════════════════════════════════
+const INACTIVITY_TIMEOUT = 2 * 60 * 1000;   // 2 minutes
+const WARNING_BEFORE    = 30 * 1000;         // warn 30s before
+let inactivityTimer   = null;
+let warningTimer      = null;
+let warningVisible    = false;
+
+function resetInactivityTimer() {
+  if (!currentUser) return; // not logged in
+  clearTimeout(inactivityTimer);
+  clearTimeout(warningTimer);
+
+  // Hide warning if it was showing
+  if (warningVisible) {
+    hideInactivityWarning();
+  }
+
+  // Set warning timer (fires 30s before logout)
+  warningTimer = setTimeout(() => {
+    showInactivityWarning();
+  }, INACTIVITY_TIMEOUT - WARNING_BEFORE);
+
+  // Set logout timer
+  inactivityTimer = setTimeout(() => {
+    autoLogout();
+  }, INACTIVITY_TIMEOUT);
+}
+
+function showInactivityWarning() {
+  warningVisible = true;
+  const el = document.getElementById('inactivity-warning');
+  if (el) {
+    el.style.display = 'flex';
+    // Countdown
+    let secs = 30;
+    const countEl = document.getElementById('inactivity-countdown');
+    if (countEl) countEl.textContent = secs;
+    window._inactivityCountdown = setInterval(() => {
+      secs--;
+      if (countEl) countEl.textContent = secs;
+      if (secs <= 0) clearInterval(window._inactivityCountdown);
+    }, 1000);
+  }
+}
+
+function hideInactivityWarning() {
+  warningVisible = false;
+  clearInterval(window._inactivityCountdown);
+  const el = document.getElementById('inactivity-warning');
+  if (el) el.style.display = 'none';
+}
+
+function stayLoggedIn() {
+  hideInactivityWarning();
+  resetInactivityTimer();
+}
+
+function autoLogout() {
+  hideInactivityWarning();
+  clearTimeout(inactivityTimer);
+  clearTimeout(warningTimer);
+  signOut();
+  // Show message on login screen
+  setTimeout(() => {
+    const err = document.getElementById('loginError');
+    if (err) err.textContent = 'You were signed out due to inactivity.';
+  }, 200);
+}
+
+// Attach activity listeners once DOM is ready
+function initInactivityTracker() {
+  const events = ['mousemove','mousedown','keydown','touchstart','scroll','click'];
+  events.forEach(evt => document.addEventListener(evt, resetInactivityTimer, { passive: true }));
+}
+
+document.addEventListener('DOMContentLoaded', initInactivityTracker);
+
 // ══════════════════════════════════════════
 // SUPABASE CLIENT
 // ══════════════════════════════════════════
@@ -1504,6 +1584,8 @@ async function launchApp() {
   // Check weekly summary after a short delay
   setTimeout(checkShowWeeklySummary, 1200);
   checkAnthropicKey();
+  // Start inactivity timer
+  resetInactivityTimer();
 }
 
 function buildNav() {
@@ -5103,5 +5185,18 @@ seedRecurringTasks();
     </div>
   </div>
 </div>
+
+<!-- INACTIVITY WARNING OVERLAY -->
+<div id="inactivity-warning" style="display:none;position:fixed;inset:0;background:rgba(28,28,28,0.88);z-index:600;align-items:center;justify-content:center;">
+  <div style="background:var(--cream);border-radius:16px;padding:32px 36px;max-width:380px;width:90%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.4);">
+    <div style="font-size:40px;margin-bottom:12px;">⏱</div>
+    <div style="font-family:'Playfair Display',serif;font-size:20px;color:var(--dark);margin-bottom:8px;">Still there?</div>
+    <div style="font-size:14px;color:#666;margin-bottom:6px;">You'll be signed out in</div>
+    <div style="font-family:'Playfair Display',serif;font-size:48px;color:var(--rust);font-weight:700;margin-bottom:4px;"><span id="inactivity-countdown">30</span></div>
+    <div style="font-size:13px;color:#888;margin-bottom:24px;">seconds due to inactivity</div>
+    <button class="btn btn-primary" onclick="stayLoggedIn()" style="width:100%;padding:14px;">I'm Still Here</button>
+  </div>
+</div>
+
 </body>
 </html>
