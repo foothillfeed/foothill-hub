@@ -1651,7 +1651,8 @@ function renderDashboard() {
   document.getElementById('greeting-name').textContent = currentUser.name;
 
   const today = todayKey();
-  const tasks = (_cache.tasks || []).filter(t => t.date === today);
+  let tasks = (_cache.tasks || []).filter(t => t.date === today);
+  tasks = tasks.filter(t => t.assignee !== 'jeff' || currentUser.id === 'jeff');
   const done = tasks.filter(t => t.done).length;
   const reports = (_cache.reports || []).filter(r => r.date === today && r.uid === currentUser.id);
   const checkedIn = reports.find(r => r.type === 'checkin');
@@ -1675,9 +1676,16 @@ function renderDashboard() {
         <button class="btn btn-outline" onclick="showPage(\'training\');document.querySelectorAll(\'.nav-item\').forEach((b,i)=>{b.classList.toggle(\'active\',i===5)})">Training Modules</button>
       </div>
     </div>
-    ${tasks.length > 0 ? `<div class="card"><div class="card-title">Today's Tasks</div><div id="dash-tasks"></div></div>` : ''}
+    ${tasks.filter(t => (t.assignee !== 'jeff' || currentUser.id === 'jeff') && !t.done).length > 0 ? `<div class="card"><div class="card-title">Today's Tasks</div><div id="dash-tasks"></div></div>` : ''}
   `;
-  if (tasks.length > 0) { const myTasks = tasks.filter(t => !t.assignee || t.assignee === '' || t.assignee === currentUser.id); renderTasksInto('dash-tasks', myTasks.length > 0 ? myTasks : tasks, false); }
+  {
+    let dashTasks = tasks.filter(t => t.assignee !== 'jeff' || currentUser.id === 'jeff');
+    dashTasks = dashTasks.filter(t => !t.done);
+    if (dashTasks.length > 0) {
+      const myTasks = dashTasks.filter(t => !t.assignee || t.assignee === '' || t.assignee === currentUser.id);
+      renderTasksInto('dash-tasks', myTasks.length > 0 ? myTasks : dashTasks, false);
+    }
+  }
 }
 
 // ══════════════════════════════════════════
@@ -1697,15 +1705,20 @@ function renderTasks() {
   const today = todayKey();
   let tasks = (_cache.tasks || []).filter(t => t.date === today);
 
+  // Jeff-only tasks are private — hide from everyone except Jeff
+  tasks = tasks.filter(t => t.assignee !== 'jeff' || currentUser.id === 'jeff');
+
+  // Hide completed tasks from task board
+  tasks = tasks.filter(t => !t.done);
+
   if (taskView === 'mine') {
     // My tasks = assigned to me OR assigned to everyone
     tasks = tasks.filter(t => !t.assignee || t.assignee === '' || t.assignee === currentUser.id);
   }
-  // Sort: mine first (assigned to me), then everyone's, done tasks last
+  // Sort: mine first, then everyone's
   tasks.sort((a, b) => {
     const aMine = a.assignee === currentUser.id;
     const bMine = b.assignee === currentUser.id;
-    if (a.done !== b.done) return a.done ? 1 : -1;
     if (aMine !== bMine) return aMine ? -1 : 1;
     return 0;
   });
@@ -4181,15 +4194,7 @@ async function flagLowStock(productOverride, qtyOverride, urgencyOverride) {
     await saveLowStock(s);
   }
 
-  // Auto-create reorder task
-  if (!_cache.tasks) _cache.tasks = [];
-  const taskText = 'Reorder: ' + product + (qty ? ' (' + qty + ' left)' : '');
-  const alreadyTasked = _cache.tasks.some(t => t.date === todayKey() && t.text === taskText);
-  if (!alreadyTasked) {
-    const task = { id: Date.now()+'t', text: taskText, priority: urgency==='urgent'?'high':urgency==='low'?'med':'low', assignee:'', done:false, date:todayKey(), addedBy:'Auto (Low Stock)', addedAt:new Date().toISOString() };
-    _cache.tasks.push(task);
-    await saveTask(task);
-  }
+  // Low stock is flagged for Jeff in Manager View — no task created
 
   if (document.getElementById('stock-product')) document.getElementById('stock-product').value = '';
   if (document.getElementById('stock-qty')) document.getElementById('stock-qty').value = '';
