@@ -4982,9 +4982,113 @@ function exportScheduleSheet() {
 
 // ── Scheduling AI Assistant ──
 let schedChatHistory = [];
+let _clockPatternCache = null; // cached result of last 30-day analysis
+
+// ── CLOCK PATTERN ANALYZER ──
+// Fetches last 30 days of ff_time_entries and builds per-employee pattern summaries
+async function buildClockPatterns() {
+  try {
+    const cutoff = dateKey(new Date(Date.now() - 30 * 86400000));
+    const SUPA_URL = 'https://fvwqjwbxrgfejkdzbxqi.supabase.co';
+    const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ2d3Fqd2J4cmdmZWprZHpieHFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcwNjgyOTQsImV4cCI6MjA5MjY0NDI5NH0.msbgTznD4y8wisK4u5wMk6ihMVaF4v31zfuPVCR48SA';
+
+    const res = await fetch(
+      `${SUPA_URL}/rest/v1/ff_time_entries?date=gte.${cutoff}&state=eq.clocked-out&clock_in=not.is.null&clock_out=not.is.null&order=date.asc&limit=500`,
+      { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY } }
+    );
+    if (!res.ok) return null;
+    const entries = await res.json();
+    if (!entries || entries.length === 0) return null;
+
+    const DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const users = getUsers();
+    const stats = {}; // uid -> { shifts: [{dow, date, startMin, endMin, mins}], weekDays: Set }
+
+    entries.forEach(e => {
+      if (!e.clock_in || !e.clock_out || e.total_minutes < 30) return; // skip ghost punches
+      const uid = e.uid;
+      if (!users[uid]) return;
+
+      const ci = new Date(e.clock_in);
+      const co = new Date(e.clock_out);
+      const dow = new Date(e.date + 'T12:00:00').getDay(); // 0=Sun..6=Sat
+      const startMin = ci.getHours() * 60 + ci.getMinutes();
+      const endMin = co.getHours() * 60 + co.getMinutes();
+      const workedMins = e.total_minutes;
+
+      if (!stats[uid]) stats[uid] = { shifts: [], weekSet: new Set() };
+
+      // Track which Mon-Sun weeks this person worked (for avg days/week)
+      const d = new Date(e.date + 'T12:00:00');
+      const mondayMs = d - ((d.getDay() === 0 ? 6 : d.getDay() - 1) * 86400000);
+      stats[uid].weekSet.add(new Date(mondayMs).toISOString().slice(0,10));
+      stats[uid].shifts.push({ dow, date: e.date, startMin, endMin, workedMins });
+    });
+
+    // Build summary string per employee
+    const lines = [];
+    Object.entries(stats).forEach(([uid, data]) => {
+      const name = users[uid]?.name || uid;
+      const shifts = data.shifts;
+      if (shifts.length === 0) return;
+
+      // Days of week worked (with frequency)
+      const dowCount = {};
+      shifts.forEach(s => { dowCount[s.dow] = (dowCount[s.dow] || 0) + 1; });
+      const totalDays = shifts.length;
+      const weeksObserved = Math.max(data.weekSet.size, 1);
+      const avgDaysPerWeek = (totalDays / weeksObserved).toFixed(1);
+
+      // Avg start/end per day of week
+      const dowStats = {};
+      shifts.forEach(s => {
+        if (!dowStats[s.dow]) dowStats[s.dow] = { starts: [], ends: [], mins: [] };
+        dowStats[s.dow].starts.push(s.startMin);
+        dowStats[s.dow].ends.push(s.endMin);
+        dowStats[s.dow].mins.push(s.workedMins);
+      });
+
+      // Format time from minutes
+      const fmtMin = m => {
+        const h = Math.floor(m / 60);
+        const min = m % 60;
+        const ampm = h >= 12 ? 'pm' : 'am';
+        const h12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+        return min === 0 ? `${h12}${ampm}` : `${h12}:${String(min).padStart(2,'0')}${ampm}`;
+      };
+
+      const avg = arr => Math.round(arr.reduce((a,b)=>a+b,0) / arr.length);
+
+      // Build per-day summary for days they work most
+      const dayDetails = [];
+      [1,2,3,4,5,6,0].forEach(dow => { // Mon-Sun order
+        if (!dowStats[dow]) return;
+        const ds = dowStats[dow];
+        const freq = ds.starts.length;
+        if (freq < 2) return; // skip one-off days
+        const avgStart = fmtMin(avg(ds.starts));
+        const avgEnd = fmtMin(avg(ds.ends));
+        const avgHrs = (avg(ds.mins) / 60).toFixed(1);
+        dayDetails.push(`${DAY_NAMES[dow]}: ${avgStart}–${avgEnd} (~${avgHrs}h)`);
+      });
+
+      const overallAvgHrs = (avg(shifts.map(s => s.workedMins)) / 60).toFixed(1);
+      const summary = `  ${name}: avg ${avgDaysPerWeek} days/week, ${overallAvgHrs}h/shift` +
+        (dayDetails.length > 0 ? `
+    Typical shifts — ${dayDetails.join(', ')}` : '');
+      lines.push(summary);
+    });
+
+    return lines.length > 0 ? lines.join('
+') : null;
+  } catch(err) {
+    console.warn('Clock pattern fetch failed:', err);
+    return null;
+  }
+}
 
 // Build scheduling system prompt dynamically from live availability
-function buildSchedSystem() {
+function buildSchedSystem(clockPatterns) {
   const users = getUsers();
   const DAY_NAMES_FULL2 = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const DAYS_ORDER2 = [1,2,3,4,5,6,0];
@@ -5102,7 +5206,16 @@ Tuesday
 Rick (8:00–1:00), Joe (8:30), Danny (10:00), Gage (2:00)
 
 After the full week, add a short note about any gaps or constraints you could not satisfy.
-Keep it clean and practical.\`;
+Keep it clean and practical.
+
+\${clockPatterns ? \`
+═══════════════════════════════════
+REAL CLOCK-IN/OUT PATTERNS (last 30 days of actual punches)
+Use this to calibrate hours targets and typical start/end times per person.
+These are observed averages — hard availability rules above still take priority.
+\${clockPatterns}
+Do not schedule anyone more days or hours than their observed pattern unless Jeff specifically asks.
+\` : ''}\`;
 }
 
 // ── SCHEDULE PARSER & POPULATE ──
@@ -5279,11 +5392,16 @@ async function sendSchedChat() {
   const weekContext = 'Current week being scheduled: ' + dates.map(fmt).join(', ');
   const messagesWithContext = [...schedChatHistory.slice(0,-1), { role:'user', content: weekContext + '\n\n' + text }];
 
+  // Fetch clock patterns (use cache if already loaded this session)
+  if (!_clockPatternCache) {
+    _clockPatternCache = await buildClockPatterns();
+  }
+
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method:'POST',
       headers:{'Content-Type':'application/json','x-api-key':getAnthropicKey(),'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:2000,system:buildSchedSystem(),messages:messagesWithContext})
+      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:2000,system:buildSchedSystem(_clockPatternCache),messages:messagesWithContext})
     });
     const data = await res.json();
     const reply = data.content?.[0]?.text || 'Sorry, try again.';
