@@ -1471,15 +1471,15 @@ async function saveUserPin(uid, pin) {
 // USERS
 // ══════════════════════════════════════════
 const DEFAULT_USERS = {
-  jeff:   { name:'Jeff',   role:'manager', pin:'1001', color:'#2D5233' },
+  jeff:   { name:'Jeff',   role:'manager', pin:'6905', color:'#2D5233' },
   rick:   { name:'Rick',   role:'lead',    pin:'2001', color:'#3A6B8A' },
-  danny:  { name:'Danny',  role:'lead',    pin:'2002', color:'#3A6B8A' },
+  danny:  { name:'Danny',  role:'lead',    pin:'6633', color:'#3A6B8A' },
   kristi: { name:'Kristi', role:'staff',   pin:'3001', color:'#6B7C5C' },
   joe:    { name:'Joe',    role:'staff',   pin:'3002', color:'#6B7C5C' },
   max:    { name:'Max',    role:'staff',   pin:'3003', color:'#6B7C5C' },
-  gage:   { name:'Gage',   role:'staff',   pin:'3004', color:'#6B7C5C' },
-  blake:  { name:'Blake',  role:'staff',   pin:'3005', color:'#6B7C5C' },
-  ryan:   { name:'Ryan',   role:'staff',   pin:'3006', color:'#8B5E3C' },
+  gage:   { name:'Gage',   role:'staff',   pin:'3491', color:'#6B7C5C' },
+  blake:  { name:'Blake',  role:'staff',   pin:'4364', color:'#6B7C5C' },
+  ryan:   { name:'Ryan',   role:'staff',   pin:'1214', color:'#8B5E3C' },
   maureen:{ name:'Maureen', role:'lead',    pin:'2003', color:'#3A6B8A' },
 };
 
@@ -1525,9 +1525,8 @@ async function pinSubmit() {
   if (enteredPin !== localUser.pin) {
     // Also check Supabase in case PIN was changed
     try {
-      showAppLoading(true);
+      showLoginError('Checking…');
       const sbUsers = await sbGet('ff_users');
-      showAppLoading(false);
       const sbUser = sbUsers.find(u => u.uid === uid);
       if (sbUser && enteredPin === sbUser.pin) {
         // PIN matches Supabase — update local defaults and proceed
@@ -1539,7 +1538,6 @@ async function pinSubmit() {
       }
       showLoginError('Incorrect PIN. Try again.');
     } catch(e) {
-      showAppLoading(false);
       showLoginError('Incorrect PIN. Try again.');
     }
     return;
