@@ -1315,7 +1315,7 @@ function showAppLoading(show) {
 async function loadAllData(uid) {
   showAppLoading(true);
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const today = todayKey();
     const [users, tasks, recurring, reports, timeEntries, schedule, timeoffs, lowStock, feedback, deliveries, training] = await Promise.all([
       sbGet('ff_users'),
       sbGet('ff_tasks'),
@@ -1683,7 +1683,7 @@ function renderDashboard() {
 // ══════════════════════════════════════════
 // TASKS
 // ══════════════════════════════════════════
-function todayKey() { return new Date().toISOString().split('T')[0]; }
+function todayKey() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
 
 function setTaskView(view) {
   taskView = view;
@@ -2781,7 +2781,7 @@ function exportTimesheet() {
 
 function exportShiftsCSV() {
   const filtered = getFilteredEntries();
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = todayKey();
 
   const header = ['Date','Day','Employee','Clock In','Clock Out','Regular Hrs (≤8)','Daily OT 1.5x (8-12h)','Daily OT 2x (>12h)','Total Hrs','Rest Breaks','Meal Breaks','Meal Waiver','CA Notes'];
   const rows = filtered.map(e => {
@@ -2812,7 +2812,7 @@ function exportShiftsCSV() {
 
 function exportSummaryCSV() {
   const filtered = getFilteredEntries();
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = todayKey();
 
   // ── California Overtime Rules ──
   // Daily:  >8 hrs  = 1.5x  |  >12 hrs = 2x
@@ -2831,7 +2831,7 @@ function exportSummaryCSV() {
     const dow = d.getDay(); // 0=Sun, 1=Mon...
     const monday = new Date(d);
     monday.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
-    const weekKey = monday.toISOString().split('T')[0];
+    const weekKey = dateKey(monday);
 
     if (!weekData[uid]) weekData[uid] = {};
     if (!weekData[uid][weekKey]) weekData[uid][weekKey] = { entries: [], name: e.name || uid };
@@ -2849,7 +2849,7 @@ function exportSummaryCSV() {
     Object.entries(weeks).sort((a,b) => a[0].localeCompare(b[0])).forEach(([weekStart, data]) => {
       const sunday = new Date(weekStart + 'T12:00:00');
       sunday.setDate(sunday.getDate() + 6);
-      const weekEnd = sunday.toISOString().split('T')[0];
+      const weekEnd = dateKey(sunday);
 
       // Sort entries by date within the week
       const entries = data.entries.slice().sort((a,b) => a.date.localeCompare(b.date));
@@ -2926,7 +2926,7 @@ function exportSummaryCSV() {
 // Set default date range for timesheet filter (current week)
 function initTcEditDate() {
   const el = document.getElementById('tc-edit-date');
-  if (el) el.value = new Date().toISOString().split('T')[0];
+  if (el) el.value = todayKey();
 }
 
 function initTimesheetDates() {
@@ -2936,8 +2936,8 @@ function initTimesheetDates() {
   monday.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
   const from = document.getElementById('ts-from');
   const to = document.getElementById('ts-to');
-  if (from) from.value = monday.toISOString().split('T')[0];
-  if (to) to.value = today.toISOString().split('T')[0];
+  if (from) from.value = dateKey(monday);
+  if (to) to.value = dateKey(today);
 }
 
 
@@ -3151,7 +3151,7 @@ function getFilteredReports() {
   const all = _cache.reports || [];
   const empFilter = document.getElementById('analytics-emp')?.value || 'all';
   const rangeVal = document.getElementById('analytics-range')?.value || '30';
-  const cutoff = rangeVal === 'all' ? null : new Date(Date.now() - parseInt(rangeVal) * 86400000).toISOString().split('T')[0];
+  const cutoff = rangeVal === 'all' ? null : dateKey(new Date(Date.now() - parseInt(rangeVal) * 86400000));
   return all.filter(r => {
     if (empFilter !== 'all' && r.uid !== empFilter) return false;
     if (cutoff && r.date < cutoff) return false;
@@ -3223,14 +3223,14 @@ function renderAnalytics() {
   const feedbackEl = document.getElementById('mgr-feedback-quick');
   if (feedbackEl) {
     const fbAll = _cache.feedback || [];
-    const fbRange = rangeVal === 'all' ? fbAll : fbAll.filter(f => f.date >= (new Date(Date.now() - parseInt(rangeVal)*86400000).toISOString().split('T')[0]));
+    const fbRange = rangeVal === 'all' ? fbAll : fbAll.filter(f => f.date >= dateKey(new Date(Date.now() - parseInt(rangeVal)*86400000)));
     const fbCounts = { complaint:0, compliment:0, request:0 };
     fbRange.forEach(f => { if (fbCounts[f.type] !== undefined) fbCounts[f.type]++; });
     feedbackEl.innerHTML = `
       <div class="analytics-card" style="flex:1;min-width:120px;text-align:center;"><div class="analytics-num" style="color:#c62828;">${fbCounts.complaint}</div><div class="analytics-label">Complaints</div></div>
       <div class="analytics-card" style="flex:1;min-width:120px;text-align:center;"><div class="analytics-num" style="color:#2e7d32;">${fbCounts.compliment}</div><div class="analytics-label">Compliments</div></div>
       <div class="analytics-card" style="flex:1;min-width:120px;text-align:center;"><div class="analytics-num" style="color:#3949ab;">${fbCounts.request}</div><div class="analytics-label">Product Requests</div></div>
-      <div class="analytics-card" style="flex:1;min-width:120px;text-align:center;"><div class="analytics-num" style="color:${(_cache.deliveries||[]).filter(d=>d.hasIssue).length>0?'var(--rust)':'var(--sage)'}">${(_cache.deliveries||[]).filter(d=>d.hasIssue && d.date >= (rangeVal==='all'?'2000-01-01':new Date(Date.now()-parseInt(rangeVal)*86400000).toISOString().split('T')[0])).length}</div><div class="analytics-label">Delivery Issues</div></div>
+      <div class="analytics-card" style="flex:1;min-width:120px;text-align:center;"><div class="analytics-num" style="color:${(_cache.deliveries||[]).filter(d=>d.hasIssue).length>0?'var(--rust)':'var(--sage)'}">${(_cache.deliveries||[]).filter(d=>d.hasIssue && d.date >= (rangeVal==='all'?'2000-01-01':dateKey(new Date(Date.now()-parseInt(rangeVal)*86400000)))).length}</div><div class="analytics-label">Delivery Issues</div></div>
     `;
   }
 
@@ -3400,7 +3400,7 @@ function exportReportCSV() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `FoothillFeed_ShiftReports_${new Date().toISOString().split('T')[0]}.csv`;
+  a.download = `FoothillFeed_ShiftReports_${todayKey()}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -3557,7 +3557,7 @@ function buildReviewDetail(uid) {
 
   // Stats
   const allReports = (_cache.reports||[]).filter(r=>r.uid===uid);
-  const last30 = new Date(Date.now()-30*86400000).toISOString().split('T')[0];
+  const last30 = dateKey(new Date(Date.now() - 30*86400000));
   const recentReports = allReports.filter(r=>r.date>=last30);
   const checkouts = recentReports.filter(r=>r.type==='checkout');
   const checkins = recentReports.filter(r=>r.type==='checkin');
@@ -4049,7 +4049,7 @@ function exportDeliveryCSV() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `FoothillFeed_Deliveries_${new Date().toISOString().split('T')[0]}.csv`;
+  a.download = `FoothillFeed_Deliveries_${todayKey()}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -4099,7 +4099,7 @@ function renderFeedback() {
 
   const all = _cache.feedback || [];
   const rangeVal = document.getElementById('feedback-range')?.value || '30';
-  const cutoff = rangeVal === 'all' ? null : new Date(Date.now() - parseInt(rangeVal) * 86400000).toISOString().split('T')[0];
+  const cutoff = rangeVal === 'all' ? null : dateKey(new Date(Date.now() - parseInt(rangeVal) * 86400000));
   const rangeFiltered = all.filter(f => !cutoff || f.date >= cutoff);
 
   // Summary counts
@@ -4153,7 +4153,7 @@ function exportFeedbackCSV() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `FoothillFeed_CustomerLog_${new Date().toISOString().split('T')[0]}.csv`;
+  a.download = `FoothillFeed_CustomerLog_${todayKey()}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -4716,7 +4716,7 @@ function weekDates(offset) {
   });
 }
 
-function dateKey(d) { return d.toISOString().split('T')[0]; }
+function dateKey(d) { return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
 
 function getSchedule() { return _cache.schedule || {}; }
 
