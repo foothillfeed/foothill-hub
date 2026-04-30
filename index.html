@@ -5141,7 +5141,7 @@ function buildSchedSystem(clockPatterns) {
     availLines += '- ' + user.name + ' (' + user.role + '): ' + lines.join(', ') + '\n';
   });
 
-  return `You are a scheduling assistant for Foothill Feed, a retail feed and pet supply store in Loomis, CA. Build practical weekly schedules for Jeff that follow every rule below exactly. Do not schedule anyone outside their availability. Do not add extra people when not needed.
+  let prompt = `You are a scheduling assistant for Foothill Feed, a retail feed and pet supply store in Loomis, CA. Build practical weekly schedules for Jeff that follow every rule below exactly. Do not schedule anyone outside their availability. Do not add extra people when not needed.
 
 STORE HOURS:
 Monday–Friday: 8:00am–6:30pm
@@ -5232,16 +5232,17 @@ Tuesday
 Rick (8:00–1:00), Joe (8:30), Danny (10:00), Gage (2:00)
 
 After the full week, add a short note about any gaps or constraints you could not satisfy.
-Keep it clean and practical.
+Keep it clean and practical.`;
 
-\${clockPatterns ? \`
-═══════════════════════════════════
-REAL CLOCK-IN/OUT PATTERNS (last 30 days of actual punches)
-Use this to calibrate hours targets and typical start/end times per person.
-These are observed averages — hard availability rules above still take priority.
-\${clockPatterns}
-Do not schedule anyone more days or hours than their observed pattern unless Jeff specifically asks.
-\` : ''}\`;
+  if (clockPatterns) {
+    prompt += '\n\nREAL CLOCK-IN/OUT PATTERNS (last 30 days of actual punches)\n';
+    prompt += 'Use this to calibrate hours targets and typical start/end times per person.\n';
+    prompt += 'These are observed averages - hard availability rules above still take priority.\n';
+    prompt += clockPatterns + '\n';
+    prompt += 'Do not schedule anyone more days or hours than their observed pattern unless Jeff specifically asks.';
+  }
+
+  return prompt;
 }
 
 // ── SCHEDULE PARSER & POPULATE ──
