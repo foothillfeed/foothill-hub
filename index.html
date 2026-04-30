@@ -1241,7 +1241,7 @@ function autoLogout() {
   hideInactivityWarning();
   clearTimeout(inactivityTimer);
   clearTimeout(warningTimer);
-  signOut();
+  logout();
   // Show message on login screen
   setTimeout(() => {
     const err = document.getElementById('loginError');
