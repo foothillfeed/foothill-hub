@@ -5065,12 +5065,172 @@ HOURS BALANCE:
 - Gage, Blake, Ryan, Max are part-time — schedule based on availability and business need.
 - Don't overload any one person with all the opens or all the closes.
 
-OUTPUT FORMAT:
-- When generating a full week, show each day with staff names and start times.
-- Use the format: Name (start time) — e.g., Rick (8:00), Danny (8:30), Joe (10:00), Gage (2:00)
-- For weekend pairs use: Name / Name (open)
-- Flag any coverage gaps or days where you couldn't meet the minimum 2-staff rule.
-- Keep it practical and concise — Jeff needs something he can post quickly.`;
+OUTPUT FORMAT (IMPORTANT — follow exactly so shifts can auto-populate the grid):
+- When generating a full week, organize by day with a clear day header on its own line.
+- Day header format: Monday, Tuesday, Wednesday, etc. (just the day name, nothing else on that line)
+- Under each day, list each person with their start time in parentheses:
+  Rick (8:00), Danny (8:30), Joe (10:00), Gage (2:00)
+- If someone works a defined end time write it as: Rick (8:00–1:00)
+- One person per line or comma-separated on one line — both work.
+- For weekends use the same format: Joe (9:00), Kristi (9:00), Blake (10:00)
+- After listing all days, add a brief coverage note if there are any gaps.
+- Always use the person's first name exactly as it appears in the staff list.
+- Keep it clean and scannable — Jeff will post this for the team.`;
+}
+
+// ── SCHEDULE PARSER & POPULATE ──
+
+// Parse AI text into structured shifts: { uid -> { dateStr -> [{start, end}] } }
+function parseScheduleFromText(text, dates) {
+  const users = getUsers();
+  const result = {};
+
+  // Build name->uid map (case-insensitive)
+  const nameMap = {};
+  Object.entries(users).forEach(([uid, u]) => {
+    nameMap[u.name.toLowerCase()] = uid;
+  });
+
+  // Day name -> date index (Mon=0...Sun=6 in our dates array)
+  const DAY_MAP = { mon:0, monday:0, tue:1, tuesday:1, wed:2, wednesday:2, thu:3, thursday:3, fri:4, friday:4, sat:5, saturday:5, sun:6, sunday:6 };
+
+  // Parse time like "8:00", "8am", "8:30am", "08:00" -> "HH:MM"
+  function parseTime(t) {
+    t = t.trim().toLowerCase().replace(/\s/g,'');
+    const m = t.match(/^(\d{1,2})(?::(\d{2}))?(am|pm)?$/);
+    if (!m) return null;
+    let h = parseInt(m[1]);
+    const min = m[2] ? parseInt(m[2]) : 0;
+    const ampm = m[3];
+    if (ampm === 'pm' && h < 12) h += 12;
+    if (ampm === 'am' && h === 12) h = 0;
+    return String(h).padStart(2,'0') + ':' + String(min).padStart(2,'0');
+  }
+
+  // Default end time based on role/position in day
+  function defaultEnd(uid, dow) {
+    return STORE_HOURS[dow]?.close || '18:30';
+  }
+
+  const lines = text.split('\n');
+  let currentDay = null;
+  let currentDow = -1;
+
+  lines.forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+
+    // Detect day header: "Monday", "**Monday**", "Monday 4/27:", etc.
+    const dayMatch = trimmed.match(/^\*{0,2}(mon|tue|wed|thu|fri|sat|sun)[a-z]*\*{0,2}[\s:,]*/i);
+    if (dayMatch) {
+      const dayKey2 = dayMatch[1].toLowerCase().slice(0,3);
+      if (DAY_MAP[dayKey2] !== undefined) {
+        currentDow = DAY_MAP[dayKey2];
+        currentDay = dates[currentDow];
+      }
+    }
+
+    // Detect inline day prefix on same line as shift: "Mon: Rick (8:00)..." or "Monday — Rick..."
+    // Also handles lines like "- Rick (8:00)" or "Rick: 8:00–4:00"
+    // Try to find name + time on the line
+    Object.entries(nameMap).forEach(([name, uid]) => {
+      // Match: Name (start) or Name (start–end) or Name: start–end or Name start–end
+      const patterns = [
+        new RegExp(name + '\\s*\\((\\d{1,2}(?::\\d{2})?(?:am|pm)?)(?:[–\\-](\\d{1,2}(?::\\d{2})?(?:am|pm)?))?\\)', 'i'),
+        new RegExp(name + '[:\\s]+(\\d{1,2}(?::\\d{2})?(?:am|pm)?)[–\\-](\\d{1,2}(?::\\d{2})?(?:am|pm)?)', 'i'),
+        new RegExp(name + '[:\\s]+(\\d{1,2}(?::\\d{2})?(?:am|pm)?)', 'i'),
+      ];
+
+      // Also check for inline day on this line
+      let lineDow = currentDow;
+      const inlineDay = trimmed.match(/^\*{0,2}(mon|tue|wed|thu|fri|sat|sun)[a-z]*/i);
+      if (inlineDay) {
+        const dk = inlineDay[1].toLowerCase().slice(0,3);
+        if (DAY_MAP[dk] !== undefined) lineDow = DAY_MAP[dk];
+      }
+
+      if (lineDow < 0 || !dates[lineDow]) return;
+      const dateStr = dateKey(dates[lineDow]);
+
+      patterns.some(pat => {
+        const m = trimmed.match(pat);
+        if (m) {
+          const start = parseTime(m[1]);
+          const end = m[2] ? parseTime(m[2]) : defaultEnd(uid, (lineDow + 1) % 7 === 0 ? 0 : lineDow === 6 ? 0 : [1,2,3,4,5,6,0][lineDow]);
+          if (!start) return false;
+          // Map dow index (0=Mon in dates array) to JS getDay() dow
+          const jsDow = dates[lineDow].getDay();
+          const closeTime = STORE_HOURS[jsDow]?.close || '18:30';
+          const endTime = end || closeTime;
+          if (!result[uid]) result[uid] = {};
+          if (!result[uid][dateStr]) result[uid][dateStr] = [];
+          // Avoid duplicates
+          if (!result[uid][dateStr].some(s => s.start === start)) {
+            result[uid][dateStr].push({ start, end: endTime, note: '' });
+          }
+          return true;
+        }
+        return false;
+      });
+    });
+  });
+
+  return result;
+}
+
+// Count total shifts parsed
+function countParsedShifts(parsed) {
+  let n = 0;
+  Object.values(parsed).forEach(days => Object.values(days).forEach(shifts => { n += shifts.length; }));
+  return n;
+}
+
+// Apply parsed schedule to grid + Supabase
+async function populateGridFromParsed(parsed) {
+  const promises = [];
+  Object.entries(parsed).forEach(([uid, days]) => {
+    Object.entries(days).forEach(([dateStr, shifts]) => {
+      saveShiftData(uid, dateStr, shifts);
+      promises.push(saveScheduleEntry(dateStr, uid, shifts));
+    });
+  });
+  await Promise.all(promises);
+  renderSchedule();
+}
+
+// Store last parsed schedule for the populate button
+let _lastParsedSchedule = null;
+
+async function populateGridClicked() {
+  if (!_lastParsedSchedule) return;
+  const n = countParsedShifts(_lastParsedSchedule);
+  if (n === 0) {
+    alert('No shifts could be parsed from that suggestion. Try asking for a full week schedule with specific start times for each person.');
+    return;
+  }
+  const existing = weekHasShifts();
+  if (existing) {
+    if (!confirm(`This will overwrite existing shifts for this week. Continue?`)) return;
+  }
+  // Clear current week first
+  const dates = weekDates(schedWeekOffset);
+  if (_cache.schedule) {
+    dates.forEach(d => { delete _cache.schedule[dateKey(d)]; });
+  }
+  await populateGridFromParsed(_lastParsedSchedule);
+
+  // Update button state
+  const btn = document.getElementById('populate-grid-btn');
+  if (btn) { btn.textContent = '✓ Grid Populated!'; btn.disabled = true; btn.style.background = '#2D5233'; }
+}
+
+function weekHasShifts() {
+  const dates = weekDates(schedWeekOffset);
+  return dates.some(d => {
+    const ds = dateKey(d);
+    const dayData = (_cache.schedule || {})[ds] || {};
+    return Object.values(dayData).some(shifts => shifts.length > 0);
+  });
 }
 
 async function sendSchedChat() {
@@ -5086,17 +5246,38 @@ async function sendSchedChat() {
 
   schedChatHistory.push({ role:'user', content: text });
 
+  // Include current week dates in the user message context
+  const dates = weekDates(schedWeekOffset);
+  const fmt = d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][[1,2,3,4,5,6,0].indexOf(d.getDay())] + ' ' + (d.getMonth()+1) + '/' + d.getDate();
+  const weekContext = 'Current week being scheduled: ' + dates.map(fmt).join(', ');
+  const messagesWithContext = [...schedChatHistory.slice(0,-1), { role:'user', content: weekContext + '\n\n' + text }];
+
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method:'POST',
       headers:{'Content-Type':'application/json','x-api-key':getAnthropicKey(),'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,system:buildSchedSystem(),messages:schedChatHistory})
+      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:2000,system:buildSchedSystem(),messages:messagesWithContext})
     });
     const data = await res.json();
     const reply = data.content?.[0]?.text || 'Sorry, try again.';
     schedChatHistory.push({role:'assistant',content:reply});
+
+    // Try to parse shifts from the reply
+    _lastParsedSchedule = parseScheduleFromText(reply, dates);
+    const parsedCount = countParsedShifts(_lastParsedSchedule);
+
     const typing = document.getElementById('sched-typing');
-    if (typing) typing.outerHTML = `<div class="sched-msg ai">${reply.replace(/\n/g,'<br>')}</div>`;
+    if (typing) {
+      // Show reply + populate button if shifts were parsed
+      const populateBtn = parsedCount > 0
+        ? `<div style="margin-top:10px;">
+            <button id="populate-grid-btn" onclick="populateGridClicked()" style="background:var(--sage);color:white;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-family:'DM Sans',sans-serif;cursor:pointer;font-weight:600;width:100%;">
+              ↓ Populate Schedule Grid (${parsedCount} shifts)
+            </button>
+           </div>`
+        : '';
+      typing.outerHTML = `<div class="sched-msg ai">${reply.replace(/\n/g,'<br>')}${populateBtn}</div>`;
+    }
   } catch(e) {
     const typing = document.getElementById('sched-typing');
     if (typing) typing.outerHTML = `<div class="sched-msg ai" style="color:#e07060;">Connection error — try again.</div>`;
