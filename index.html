@@ -31,7 +31,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
 .pin-dot { width:14px; height:14px; border-radius:50%; border:2px solid rgba(247,243,237,0.3); transition:all 0.2s; }
 .pin-dot.filled { background:var(--gold); border-color:var(--gold); }
 .pin-pad { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:16px; }
-.pin-btn { background:#1a1a1a; border:1px solid rgba(247,243,237,0.15); border-radius:10px; color:var(--cream); font-size:18px; font-weight:400; padding:16px; cursor:pointer; transition:all 0.15s; font-family:'DM Sans',sans-serif; }
+.pin-btn { background:#1a1a1a; border:1px solid rgba(247,243,237,0.15); border-radius:10px; color:var(--cream); font-size:18px; font-weight:400; padding:16px; cursor:pointer; transition:all 0.15s; font-family:'DM Sans',sans-serif; touch-action:manipulation; -webkit-tap-highlight-color:rgba(196,154,60,0.3); user-select:none; -webkit-user-select:none; }
 .pin-btn:hover { background:rgba(196,154,60,0.15); border-color:var(--gold); }
 .pin-btn.wide { grid-column:span 2; }
 .pin-btn.gold { background:var(--gold); color:var(--dark); font-weight:500; }
@@ -502,19 +502,19 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
       <div class="pin-dot" id="d2"></div>
       <div class="pin-dot" id="d3"></div>
     </div>
-    <div class="pin-pad">
-      <button class="pin-btn" onclick="pinPress('1')">1</button>
-      <button class="pin-btn" onclick="pinPress('2')">2</button>
-      <button class="pin-btn" onclick="pinPress('3')">3</button>
-      <button class="pin-btn" onclick="pinPress('4')">4</button>
-      <button class="pin-btn" onclick="pinPress('5')">5</button>
-      <button class="pin-btn" onclick="pinPress('6')">6</button>
-      <button class="pin-btn" onclick="pinPress('7')">7</button>
-      <button class="pin-btn" onclick="pinPress('8')">8</button>
-      <button class="pin-btn" onclick="pinPress('9')">9</button>
-      <button class="pin-btn" onclick="pinClear()">⌫</button>
-      <button class="pin-btn" onclick="pinPress('0')">0</button>
-      <button class="pin-btn gold" onclick="pinSubmit()">→</button>
+    <div class="pin-pad" id="pin-pad">
+      <button class="pin-btn" data-pin="1">1</button>
+      <button class="pin-btn" data-pin="2">2</button>
+      <button class="pin-btn" data-pin="3">3</button>
+      <button class="pin-btn" data-pin="4">4</button>
+      <button class="pin-btn" data-pin="5">5</button>
+      <button class="pin-btn" data-pin="6">6</button>
+      <button class="pin-btn" data-pin="7">7</button>
+      <button class="pin-btn" data-pin="8">8</button>
+      <button class="pin-btn" data-pin="9">9</button>
+      <button class="pin-btn" data-pin="clear">⌫</button>
+      <button class="pin-btn" data-pin="0">0</button>
+      <button class="pin-btn gold" data-pin="submit">→</button>
     </div>
     <div class="login-error" id="loginError"></div>
   </div>
@@ -1509,6 +1509,36 @@ function updateDots() {
     document.getElementById('d'+i).classList.toggle('filled', i < pinBuffer.length);
   }
 }
+
+function initPinPad() {
+  const pad = document.getElementById('pin-pad');
+  if (!pad) return;
+  pad.querySelectorAll('.pin-btn').forEach(btn => {
+    // Handle both touch and click to ensure cross-device compatibility
+    let touchHandled = false;
+    btn.addEventListener('touchstart', function(e) {
+      e.preventDefault(); // prevent ghost click delay on iOS
+      touchHandled = true;
+      const val = this.dataset.pin;
+      if (val === 'clear') pinClear();
+      else if (val === 'submit') pinSubmit();
+      else pinPress(val);
+      // Visual feedback
+      this.style.background = 'rgba(196,154,60,0.3)';
+      setTimeout(() => { this.style.background = ''; }, 150);
+    }, { passive: false });
+    btn.addEventListener('click', function(e) {
+      if (touchHandled) { touchHandled = false; return; } // already handled by touchstart
+      const val = this.dataset.pin;
+      if (val === 'clear') pinClear();
+      else if (val === 'submit') pinSubmit();
+      else pinPress(val);
+    });
+  });
+}
+
+// Initialize pin pad once DOM is ready
+document.addEventListener('DOMContentLoaded', initPinPad);
 async function pinSubmit() {
   const uid = document.getElementById('loginName').value;
   if (!uid) { showLoginError('Please select your name.'); pinBuffer=''; updateDots(); return; }
