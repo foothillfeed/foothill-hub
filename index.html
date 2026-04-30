@@ -5102,13 +5102,11 @@ async function buildClockPatterns() {
 
       const overallAvgHrs = (avg(shifts.map(s => s.workedMins)) / 60).toFixed(1);
       const summary = `  ${name}: avg ${avgDaysPerWeek} days/week, ${overallAvgHrs}h/shift` +
-        (dayDetails.length > 0 ? `
-    Typical shifts — ${dayDetails.join(', ')}` : '');
+        (dayDetails.length > 0 ? `\n    Typical shifts \u2014 ${dayDetails.join(', ')}` : '');
       lines.push(summary);
     });
 
-    return lines.length > 0 ? lines.join('
-') : null;
+    return lines.length > 0 ? lines.join('\n') : null;
   } catch(err) {
     console.warn('Clock pattern fetch failed:', err);
     return null;
