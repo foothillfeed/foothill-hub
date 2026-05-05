@@ -2882,7 +2882,7 @@ function exportSummaryCSV() {
   const header = [
     'Employee','Week Starting (Mon)','Week Ending (Sun)','Days Worked',
     'Regular Hours','Daily OT (1.5x)','Daily Double OT (2x)','Weekly OT (1.5x)',
-    'Total Hours','Total OT Hours','Flags'
+    'Total Hours','Total OT Hours'
   ];
   const rows = [];
 
@@ -2955,8 +2955,7 @@ function exportSummaryCSV() {
         (dailyOT2Mins / 60).toFixed(2),
         (weeklyOT15Mins / 60).toFixed(2),
         (totalMins / 60).toFixed(2),
-        (totalOTMins / 60).toFixed(2),
-        flags.length > 0 ? flags.join(' | ') : 'None'
+        (totalOTMins / 60).toFixed(2)
       ].map(v => '"' + String(v).replace(/"/g, '""') + '"').join(','));
     });
   });
