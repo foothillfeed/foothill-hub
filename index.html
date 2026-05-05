@@ -4375,6 +4375,7 @@ function renderTimeclockEditor() {
           <div style="display:flex;gap:8px;align-items:center;">
             <span style="font-size:12px;color:var(--sage);font-weight:500;">${(worked/60).toFixed(2)} hrs worked</span>
             <button class="btn btn-sm btn-primary" onclick="saveTimeclockEdit('${e.uid}','${e.date}')">Save Changes</button>
+            <button class="btn btn-sm" onclick="deleteShiftEntry('${e.uid}','${e.date}')" style="background:#fdecea;color:#c62828;border:1px solid #f5c6c6;font-size:12px;padding:6px 10px;border-radius:6px;cursor:pointer;">🗑 Delete Shift</button>
           </div>
         </div>
 
@@ -4476,6 +4477,28 @@ function deleteBreak(uid, date, idx, type) {
     entry.mealBreaks.splice(idx, 1);
   }
   renderTimeclockEditor();
+}
+
+async function deleteShiftEntry(uid, date) {
+  const users = getUsers();
+  const name = users[uid]?.name || uid;
+  if (!confirm(`Delete the entire shift for ${name} on ${date}?\n\nThis cannot be undone.`)) return;
+
+  // Remove from Supabase
+  await sbDelete('ff_time_entries', 'entry_id', uid + '_' + date);
+
+  // Also try the numeric entry_id format (timestamp-based IDs)
+  const entry = (_cache.timeEntries || []).find(e => e.uid === uid && e.date === date);
+  if (entry?.id) {
+    await sbDelete('ff_time_entries', 'entry_id', entry.id);
+  }
+
+  // Remove from cache
+  _cache.timeEntries = (_cache.timeEntries || []).filter(e => !(e.uid === uid && e.date === date));
+
+  // Show confirmation then re-render
+  renderTimeclockEditor();
+  renderTimesheetTable();
 }
 
 // ══════════════════════════════════════════
