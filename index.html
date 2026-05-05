@@ -2767,7 +2767,7 @@ function renderTimesheet() {
   if (filtered.length === 0) { wrap.innerHTML = '<div class="empty-state">No timesheet records found.</div>'; return; }
 
   const rows = filtered.map(e => {
-    const worked = e.totalMinutes || calcWorkedMinutes(e);
+    const worked = calcWorkedMinutes(e);
     const workedH = (worked/60).toFixed(2);
     const restBreaks = (e.breaks||[]).filter(b=>b.back).length;
     const mealBreaks = (e.mealBreaks||[]).filter(b=>b.back).length;
@@ -2826,7 +2826,7 @@ function exportShiftsCSV() {
 
   const header = ['Date','Day','Employee','Clock In','Clock Out','Regular Hrs (≤8)','Daily OT 1.5x (8-12h)','Daily OT 2x (>12h)','Total Hrs','Rest Breaks','Meal Breaks','Meal Waiver','CA Notes'];
   const rows = filtered.map(e => {
-    const worked = e.totalMinutes || calcWorkedMinutes(e);
+    const worked = calcWorkedMinutes(e);
     const workedH = (worked/60).toFixed(2);
     const restBreaks = (e.breaks||[]).filter(b=>b.back).length;
     const mealBreaks = (e.mealBreaks||[]).filter(b=>b.back).length;
@@ -2865,7 +2865,7 @@ function exportSummaryCSV() {
 
   filtered.forEach(e => {
     const uid = e.uid;
-    const worked = e.totalMinutes || calcWorkedMinutes(e);
+    const worked = calcWorkedMinutes(e);
     if (!worked) return;
 
     const d = new Date(e.date + 'T12:00:00');
