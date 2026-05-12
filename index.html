@@ -2856,8 +2856,8 @@ function exportSummaryCSV() {
   const dateStr = todayKey();
 
   // Determine date range label from filter inputs
-  const fromEl = document.getElementById('tc-from');
-  const toEl   = document.getElementById('tc-to');
+  const fromEl = document.getElementById('ts-from');
+  const toEl   = document.getElementById('ts-to');
   const fromLabel = fromEl?.value || '';
   const toLabel   = toEl?.value   || '';
   const rangeLabel = (fromLabel && toLabel) ? (fromLabel + ' to ' + toLabel)
