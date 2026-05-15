@@ -495,6 +495,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
       <option value="blake">Blake</option>
       <option value="ryan">Ryan</option>
       <option value="maureen">Maureen</option>
+      <option value="wendy">Wendy</option>
     </select>
     <div class="pin-display" id="pinDisplay">
       <div class="pin-dot" id="d0"></div>
@@ -582,6 +583,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
                 <option value="gage">Gage</option>
                 <option value="blake">Blake</option>
                 <option value="ryan">Ryan</option>
+                <option value="wendy">Wendy</option>
               </select>
               <button class="btn btn-primary" onclick="addTask()">Add Task</button>
             </div>
@@ -764,6 +766,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
               <option value="gage">Gage</option>
               <option value="blake">Blake</option>
               <option value="ryan">Ryan</option>
+              <option value="wendy">Wendy</option>
             </select>
             <select class="form-select" id="rec-freq" style="width:auto;" onchange="toggleRecDays()">
               <option value="daily">Every Day</option>
@@ -1024,6 +1027,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
             <option value="gage">Gage</option>
             <option value="blake">Blake</option>
             <option value="ryan">Ryan</option>
+            <option value="wendy">Wendy</option>
           </select>
           <input type="date" class="form-input" id="tc-edit-date" style="width:auto;" onchange="renderTimeclockEditor()">
           <button class="btn btn-outline btn-sm" onclick="renderTimeclockEditor()">Filter</button>
@@ -1064,6 +1068,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
             <option value="blake">Blake</option>
             <option value="ryan">Ryan</option>
           <option value="maureen">Maureen</option>
+          <option value="wendy">Wendy</option>
           </select>
           <input type="date" class="form-input" id="ts-from" style="width:auto;">
           <input type="date" class="form-input" id="ts-to" style="width:auto;">
@@ -1481,6 +1486,7 @@ const DEFAULT_USERS = {
   blake:  { name:'Blake',  role:'staff',   pin:'4364', color:'#6B7C5C' },
   ryan:   { name:'Ryan',   role:'staff',   pin:'1214', color:'#8B5E3C' },
   maureen:{ name:'Maureen', role:'lead',    pin:'2003', color:'#3A6B8A' },
+  wendy:  { name:'Wendy',   role:'staff',   pin:'3007', color:'#6B7C5C' },
 };
 
 function getUsers() {
@@ -4719,6 +4725,7 @@ const AVAILABILITY = {
   ryan: [], // fully open
   jeff: [],
   maureen: [],
+  wendy: [],
 };
 
 function getAvailNote(uid, dow) {
