@@ -347,6 +347,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
   .feedback-type-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:4px; }
   .feedback-type-btn { padding:6px 14px; border-radius:20px; border:1px solid var(--border); background:white; font-size:12px; cursor:pointer; transition:all .15s; font-family:'DM Sans',sans-serif; }
   .feedback-type-btn.selected { font-weight:500; }
+  .feedback-type-btn.selected[data-srid] { background:var(--dark); border-color:var(--dark); color:var(--cream); }
   .type-complaint .feedback-type-btn.selected, .feedback-type-btn.selected[data-type='complaint'] { background:#fde8e4; border-color:#e57373; color:#c62828; }
   .feedback-type-btn.selected[data-type='compliment'] { background:#e8f5e9; border-color:#81c784; color:#2e7d32; }
   .feedback-type-btn.selected[data-type='request'] { background:#e8f0fe; border-color:#7986cb; color:#3949ab; }
