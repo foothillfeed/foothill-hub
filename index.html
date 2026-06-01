@@ -954,6 +954,14 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
     </div>
 
 
+    <!-- DELIVERY CHECK-IN (auto-loaded from email) -->
+    <div class="page" id="page-checkin-delivery">
+      <div class="card" style="text-align:center;padding:32px;">
+        <div style="font-size:32px;margin-bottom:8px;">📦</div>
+        <div style="font-size:14px;color:#aaa;">Loading deliveries…</div>
+      </div>
+    </div>
+
     <!-- SELF REVIEW (all staff) -->
     <div class="page" id="page-self-review">
       <div class="card">
@@ -1194,6 +1202,9 @@ let warningVisible    = false;
 
 function resetInactivityTimer() {
   if (!currentUser) return; // not logged in
+  // No auto-logout on delivery check-in — staff are actively working unpacking
+  const activePage = document.querySelector('.page.active');
+  if (activePage && activePage.id === 'page-checkin-delivery') return;
   clearTimeout(inactivityTimer);
   clearTimeout(warningTimer);
 
@@ -1321,7 +1332,7 @@ async function loadAllData(uid) {
   showAppLoading(true);
   try {
     const today = todayKey();
-    const [users, tasks, recurring, reports, timeEntries, schedule, timeoffs, lowStock, feedback, deliveries, training] = await Promise.all([
+    const [users, tasks, recurring, reports, timeEntries, schedule, timeoffs, lowStock, feedback, deliveries, training, deliveryInvoices] = await Promise.all([
       sbGet('ff_users'),
       sbGet('ff_tasks'),
       sbGet('ff_recurring'),
@@ -1332,7 +1343,8 @@ async function loadAllData(uid) {
       sbGet('ff_low_stock'),
       sbGet('ff_feedback'),
       sbGet('ff_deliveries'),
-      sbGet('ff_training')
+      sbGet('ff_training'),
+      sbGet('ff_delivery_invoices')
     ]);
 
     // Map Supabase rows to app format
@@ -1366,6 +1378,24 @@ async function loadAllData(uid) {
       if (!_cache.training[t.uid]) _cache.training[t.uid] = {};
       _cache.training[t.uid][t.module_id] = t.status;
     });
+
+    // Delivery invoices pushed by Google Apps Script
+    _cache.deliveryInvoices = (deliveryInvoices || []).map(r => ({
+      id: r.id,
+      vendor: r.vendor,
+      invoiceNumber: r.invoice_number,
+      deliveryDate: r.delivery_date,
+      invoiceTotal: r.invoice_total,
+      items: r.items || [],
+      cancelledItems: r.cancelled_items || [],
+      priceChanges: r.price_changes || [],
+      status: r.status || 'pending', // pending | in_progress | done
+      checkedIn: r.checked_in || {},
+      flags: r.flags || {},
+      receivedQty: r.received_qty || {},
+      parsedAt: r.parsed_at,
+      rawFilename: r.raw_filename
+    }));
 
   } catch(e) {
     console.error('Load error:', e);
@@ -1641,6 +1671,7 @@ function buildNav() {
   if (currentUser.role === 'manager' || currentUser.role === 'lead') pages.push({ id:'availability', label:'Availability' });
   pages.push({ id:'feedback', label:'Customer Log' });
   pages.push({ id:'delivery', label:'Deliveries' });
+  pages.push({ id:'checkin-delivery', label:'📦 Receive Delivery' });
   pages.push({ id:'schedule', label:'Schedule' });
   pages.push({ id:'timeoff', label:'Time Off' });
   pages.push({ id:'settings', label:'Settings' });
@@ -1671,6 +1702,7 @@ function showPage(id) {
     if (id==='availability') renderAvailabilityEditor();
     if (id==='feedback') renderFeedback();
     if (id==='delivery') renderDeliveryLog();
+    if (id==='checkin-delivery') renderDeliveryCheckin();
     if (id==='timeoff') renderTimeoff();
     if (id==='recurring') renderRecurring();
   }
@@ -5554,7 +5586,218 @@ function renderTimeoff() {
   }).join('');
 }
 
+// ══════════════════════════════════════════
+// DELIVERY CHECK-IN (auto-loaded from email)
+// ══════════════════════════════════════════
+
+async function saveDeliveryInvoiceProgress(inv) {
+  await sbUpdate('ff_delivery_invoices', 'id', inv.id, {
+    status: inv.status,
+    checked_in: inv.checkedIn || {},
+    flags: inv.flags || {},
+    received_qty: inv.receivedQty || {}
+  });
+}
+
+function renderDeliveryCheckin() {
+  const el = document.getElementById('page-checkin-delivery');
+  if (!el) return;
+
+  const invoices = (_cache.deliveryInvoices || []);
+  const pending = invoices.filter(i => i.status === 'pending' || i.status === 'in_progress');
+  const done = invoices.filter(i => i.status === 'done').slice(0, 5);
+
+  const GREEN = '#2D5233';
+  const AMBER = '#d4853a';
+  const RED = '#c0392b';
+
+  if (pending.length === 0) {
+    el.innerHTML = `
+      <div class="card" style="text-align:center;padding:40px 24px;">
+        <div style="font-size:48px;margin-bottom:16px;">📭</div>
+        <div style="font-family:'Playfair Display',serif;font-size:20px;margin-bottom:8px;">No pending deliveries</div>
+        <div style="font-size:13px;color:#888;margin-bottom:20px;">When a vendor emails an invoice to orders@foothillfeedloomis.com, it will automatically appear here ready to check in.</div>
+        <div style="font-size:12px;color:#bbb;">Vendors: Newco · VSI · Phillips · Bar ALE</div>
+      </div>
+      ${done.length > 0 ? `
+      <div class="card">
+        <div class="card-title">Recently Completed</div>
+        ${done.map(i => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px;">
+            <div><strong>${i.vendor}</strong> · Invoice #${i.invoiceNumber}</div>
+            <div style="color:#2e7d32;font-weight:500;">✓ Done · ${i.deliveryDate}</div>
+          </div>`).join('')}
+      </div>` : ''}`;
+    return;
+  }
+
+  el.innerHTML = pending.map(inv => {
+    const items = inv.items || [];
+    const total = items.length;
+    const checkedCount = Object.keys(inv.checkedIn || {}).length;
+    const pct = total > 0 ? Math.round((checkedCount / total) * 100) : 0;
+    const isActive = inv.status === 'in_progress';
+    const vendorColor = { 'Newco': GREEN, 'VSI': '#7b3f9e', 'Phillips': '#c45c1a', 'Bar ALE': '#8B4513' }[inv.vendor] || '#3A6B8A';
+
+    return `
+    <div class="card" id="inv-card-${inv.id}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+            <span style="background:${vendorColor};color:white;font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px;">${inv.vendor}</span>
+            <span style="font-size:13px;color:#888;">Invoice #${inv.invoiceNumber}</span>
+          </div>
+          <div style="font-family:'Playfair Display',serif;font-size:18px;">Delivery · ${inv.deliveryDate}</div>
+          <div style="font-size:12px;color:#aaa;margin-top:2px;">${total} items · $${inv.invoiceTotal} total · Loaded automatically from email</div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:22px;font-weight:800;color:${vendorColor};font-family:'Playfair Display',serif;">${pct}%</div>
+          <div style="font-size:11px;color:#aaa;">${checkedCount}/${total} checked</div>
+        </div>
+      </div>
+
+      <div style="background:#eee;border-radius:99px;height:6px;margin-bottom:16px;">
+        <div style="background:${vendorColor};height:6px;border-radius:99px;width:${pct}%;transition:width 0.3s;"></div>
+      </div>
+
+      ${inv.priceChanges && inv.priceChanges.length > 0 ? `
+      <div style="background:#fff8e1;border:1px solid #f0c040;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#b8860b;">
+        ⚠ <strong>${inv.priceChanges.length} price change${inv.priceChanges.length > 1 ? 's' : ''} detected</strong> — check before shelving:
+        ${inv.priceChanges.map(p => `<span style="display:inline-block;margin:2px 4px;background:#fff;border:1px solid #f0c040;border-radius:4px;padding:2px 7px;">${p.description} $${p.previous}→$${p.current}</span>`).join('')}
+      </div>` : ''}
+
+      <div style="margin-bottom:16px;">
+        ${items.map((item, i) => {
+          const checked = !!(inv.checkedIn || {})[i];
+          const flag = (inv.flags || {})[i];
+          const flagColor = flag === 'short' ? AMBER : flag === 'damaged' ? RED : flag === 'wrong' ? '#2c5f8a' : null;
+          const flagLabel = flag === 'short' ? 'Short' : flag === 'damaged' ? 'Damaged' : flag === 'wrong' ? 'Wrong item' : null;
+          return `
+          <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);${checked ? 'opacity:0.5;' : ''}">
+            <div onclick="toggleDeliveryItem('${inv.id}',${i})" style="width:22px;height:22px;border:2px solid ${checked ? '#2e7d32' : 'var(--border)'};border-radius:5px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:${checked ? '#2e7d32' : 'white'};color:white;font-size:13px;transition:all 0.15s;">${checked ? '✓' : ''}</div>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;font-weight:${checked ? '400' : '500'};${checked ? 'text-decoration:line-through;color:#aaa;' : ''}">${item.description}</div>
+              <div style="font-size:11px;color:#bbb;">${item.item_id || ''} · Qty: ${item.ship_qty} · $${item.net_price}</div>
+            </div>
+            ${flagLabel ? `<span style="background:${flagColor}22;color:${flagColor};font-size:10px;font-weight:600;padding:3px 8px;border-radius:10px;flex-shrink:0;">${flagLabel}</span>` : ''}
+            <div style="display:flex;gap:4px;flex-shrink:0;">
+              <button onclick="flagDeliveryItem('${inv.id}',${i},'short')" title="Mark short" style="width:26px;height:26px;border-radius:4px;border:1px solid ${flag==='short'?AMBER:'#ddd'};background:${flag==='short'?'#fdf4eb':'white'};cursor:pointer;font-size:12px;">📦</button>
+              <button onclick="flagDeliveryItem('${inv.id}',${i},'damaged')" title="Mark damaged" style="width:26px;height:26px;border-radius:4px;border:1px solid ${flag==='damaged'?RED:'#ddd'};background:${flag==='damaged'?'#fdf0ee':'white'};cursor:pointer;font-size:12px;">⚠</button>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+
+      ${inv.cancelledItems && inv.cancelledItems.length > 0 ? `
+      <div style="background:#fafaf8;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#aaa;">
+        <strong>Not on this delivery:</strong> ${inv.cancelledItems.map(c => c.description).join(' · ')}
+      </div>` : ''}
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button onclick="markDeliveryDone('${inv.id}')" style="flex:1;padding:12px;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer;background:${GREEN};color:white;border:none;font-family:'DM Sans',sans-serif;">✓ Mark Delivery Complete</button>
+        <button onclick="refreshDeliveryInvoices()" style="padding:12px 16px;border-radius:8px;font-weight:500;font-size:13px;cursor:pointer;background:white;color:#888;border:1px solid #ddd;font-family:'DM Sans',sans-serif;">↻ Refresh</button>
+      </div>
+    </div>`;
+  }).join('') + (done.length > 0 ? `
+  <div class="card">
+    <div class="card-title">Recently Completed</div>
+    ${done.map(i => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px;">
+        <div><strong>${i.vendor}</strong> · Invoice #${i.invoiceNumber}</div>
+        <div style="color:#2e7d32;font-weight:500;">✓ Done · ${i.deliveryDate}</div>
+      </div>`).join('')}
+  </div>` : '');
+}
+
+function toggleDeliveryItem(invId, idx) {
+  const inv = (_cache.deliveryInvoices || []).find(i => i.id === invId);
+  if (!inv) return;
+  if (!inv.checkedIn) inv.checkedIn = {};
+  if (inv.checkedIn[idx]) { delete inv.checkedIn[idx]; } else { inv.checkedIn[idx] = true; }
+  inv.status = 'in_progress';
+  saveDeliveryInvoiceProgress(inv);
+  renderDeliveryCheckin();
+}
+
+function flagDeliveryItem(invId, idx, flagType) {
+  const inv = (_cache.deliveryInvoices || []).find(i => i.id === invId);
+  if (!inv) return;
+  if (!inv.flags) inv.flags = {};
+  if (inv.flags[idx] === flagType) { delete inv.flags[idx]; } else { inv.flags[idx] = flagType; }
+  saveDeliveryInvoiceProgress(inv);
+  renderDeliveryCheckin();
+}
+
+async function markDeliveryDone(invId) {
+  const inv = (_cache.deliveryInvoices || []).find(i => i.id === invId);
+  if (!inv) return;
+  const items = inv.items || [];
+  const checkedCount = Object.keys(inv.checkedIn || {}).length;
+  if (checkedCount < items.length) {
+    if (!confirm(`Only ${checkedCount} of ${items.length} items checked. Mark delivery complete anyway?`)) return;
+  }
+  inv.status = 'done';
+  await saveDeliveryInvoiceProgress(inv);
+
+  // Log to the delivery log automatically
+  const flagged = Object.entries(inv.flags || {});
+  const hasIssue = flagged.length > 0;
+  const issues = flagged.map(([i, f]) => {
+    const item = items[parseInt(i)];
+    return `${f === 'short' ? 'Short:' : 'Damaged:'} ${item?.description || 'item '+i}`;
+  }).join('; ');
+
+  const del = {
+    id: 'di_' + Date.now(),
+    vendor: inv.vendor,
+    invoice: inv.invoiceNumber,
+    condition: hasIssue ? (flagged.some(([,f])=>f==='damaged') ? 'damaged' : 'missing') : 'clean',
+    issues: issues,
+    action: '',
+    notes: `Auto-logged from email import. ${items.length} items received.`,
+    hasIssue,
+    loggedBy: currentUser.name,
+    uid: currentUser.id,
+    date: inv.deliveryDate || todayKey(),
+    timestamp: new Date().toISOString()
+  };
+  if (!_cache.deliveries) _cache.deliveries = [];
+  _cache.deliveries.push(del);
+  await saveDelivery(del);
+
+  renderDeliveryCheckin();
+  alert(`✓ ${inv.vendor} delivery marked complete and logged.`);
+}
+
+async function refreshDeliveryInvoices() {
+  try {
+    const rows = await sbGet('ff_delivery_invoices');
+    _cache.deliveryInvoices = (rows || []).map(r => ({
+      id: r.id,
+      vendor: r.vendor,
+      invoiceNumber: r.invoice_number,
+      deliveryDate: r.delivery_date,
+      invoiceTotal: r.invoice_total,
+      items: r.items || [],
+      cancelledItems: r.cancelled_items || [],
+      priceChanges: r.price_changes || [],
+      status: r.status || 'pending',
+      checkedIn: r.checked_in || {},
+      flags: r.flags || {},
+      receivedQty: r.received_qty || {},
+      parsedAt: r.parsed_at,
+      rawFilename: r.raw_filename
+    }));
+    renderDeliveryCheckin();
+  } catch(e) {
+    alert('Could not refresh. Check your connection.');
+  }
+}
+
+// ══════════════════════════════════════════
+
 // Init users on first load (done in launchApp after Supabase load)
+
 // Supabase-backed app — data loaded on login
 // Seed recurring tasks on load
 seedRecurringTasks();
