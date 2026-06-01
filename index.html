@@ -1332,7 +1332,7 @@ async function loadAllData(uid) {
   showAppLoading(true);
   try {
     const today = todayKey();
-    const [users, tasks, recurring, reports, timeEntries, schedule, timeoffs, lowStock, feedback, deliveries, training, deliveryInvoices] = await Promise.all([
+    const [users, tasks, recurring, reports, timeEntries, schedule, timeoffs, lowStock, feedback, deliveries, training, deliveryInvoices, selfReviews] = await Promise.all([
       sbGet('ff_users'),
       sbGet('ff_tasks'),
       sbGet('ff_recurring'),
@@ -1344,7 +1344,8 @@ async function loadAllData(uid) {
       sbGet('ff_feedback'),
       sbGet('ff_deliveries'),
       sbGet('ff_training'),
-      sbGet('ff_delivery_invoices')
+      sbGet('ff_delivery_invoices'),
+      sbGet('ff_self_reviews')
     ]);
 
     // Map Supabase rows to app format
@@ -1377,6 +1378,17 @@ async function loadAllData(uid) {
     training.forEach(t => {
       if (!_cache.training[t.uid]) _cache.training[t.uid] = {};
       _cache.training[t.uid][t.module_id] = t.status;
+    });
+
+    // Self reviews — build nested structure { uid: { monthKey: { answers, submittedAt, name } } }
+    _cache.selfReviews = {};
+    (selfReviews || []).forEach(r => {
+      if (!_cache.selfReviews[r.uid]) _cache.selfReviews[r.uid] = {};
+      _cache.selfReviews[r.uid][r.month_key] = {
+        answers: r.answers || {},
+        submittedAt: r.submitted_at,
+        name: r.name
+      };
     });
 
     // Delivery invoices pushed by Google Apps Script
@@ -3559,7 +3571,7 @@ function selectSROption(btn) {
   btn.classList.add('selected');
 }
 
-function submitSelfReview() {
+async function submitSelfReview() {
   const monthKey = getCurrentMonthKey();
   const answers = {};
   let allAnswered = true;
@@ -3578,15 +3590,28 @@ function submitSelfReview() {
 
   if (!allAnswered) { alert('Please answer all questions before submitting.'); return; }
 
-  
-    if (!_cache.selfReviews) _cache.selfReviews = {};
-    if (!(_cache.selfReviews||{})[currentUser.id]) (_cache.selfReviews||{})[currentUser.id] = {};
-    (_cache.selfReviews||{})[currentUser.id][monthKey] = {
-      answers,
-      submittedAt: new Date().toISOString(),
-      name: currentUser.name
-    };
+  const review = {
+    answers,
+    submittedAt: new Date().toISOString(),
+    name: currentUser.name
+  };
+
+  if (!_cache.selfReviews) _cache.selfReviews = {};
+  if (!_cache.selfReviews[currentUser.id]) _cache.selfReviews[currentUser.id] = {};
+  _cache.selfReviews[currentUser.id][monthKey] = review;
+
+  // Save to Supabase
+  await sbUpsert('ff_self_reviews', {
+    review_id: currentUser.id + '_' + monthKey,
+    uid: currentUser.id,
+    name: currentUser.name,
+    month_key: monthKey,
+    answers: answers,
+    submitted_at: review.submittedAt
+  });
+
   renderSelfReview();
+  alert('Self review submitted! Jeff will see it before your monthly sit-down.');
 }
 
 // ── Manager Review Detail ──
