@@ -2051,7 +2051,7 @@ async function setModuleStatus(moduleId, status) {
 async function resetAllTraining() {
   if (!confirm('Reset ALL training progress for every staff member? This cannot be undone.')) return;
   try {
-    const { error } = await _sb.from('ff_training').delete().neq('train_id', '__placeholder__');
+    const { error } = await sb.from('ff_training').delete().neq('train_id', '__placeholder__');
     if (error) throw error;
     _cache.training = {};
     renderTraining();
