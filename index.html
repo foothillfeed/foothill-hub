@@ -31,7 +31,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
 .pin-dot { width:14px; height:14px; border-radius:50%; border:2px solid rgba(247,243,237,0.3); transition:all 0.2s; }
 .pin-dot.filled { background:var(--gold); border-color:var(--gold); }
 .pin-pad { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:16px; }
-.pin-btn { background:#1a1a1a; border:1px solid rgba(247,243,237,0.15); border-radius:10px; color:var(--cream); font-size:18px; font-weight:400; padding:16px; cursor:pointer; transition:all 0.15s; font-family:'DM Sans',sans-serif; touch-action:manipulation; -webkit-tap-highlight-color:rgba(196,154,60,0.3); user-select:none; -webkit-user-select:none; }
+.pin-btn { background:#1a1a1a; border:1px solid rgba(247,243,237,0.15); border-radius:10px; color:var(--cream); font-size:18px; font-weight:400; padding:16px; cursor:pointer; transition:background 0.1s; font-family:'DM Sans',sans-serif; touch-action:manipulation; -webkit-tap-highlight-color:transparent; user-select:none; -webkit-user-select:none; display:flex; align-items:center; justify-content:center; }
 .pin-btn:hover { background:rgba(196,154,60,0.15); border-color:var(--gold); }
 .pin-btn.wide { grid-column:span 2; }
 .pin-btn.gold { background:var(--gold); color:var(--dark); font-weight:500; }
@@ -505,18 +505,18 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
       <div class="pin-dot" id="d3"></div>
     </div>
     <div class="pin-pad" id="pin-pad">
-      <button class="pin-btn" data-pin="1">1</button>
-      <button class="pin-btn" data-pin="2">2</button>
-      <button class="pin-btn" data-pin="3">3</button>
-      <button class="pin-btn" data-pin="4">4</button>
-      <button class="pin-btn" data-pin="5">5</button>
-      <button class="pin-btn" data-pin="6">6</button>
-      <button class="pin-btn" data-pin="7">7</button>
-      <button class="pin-btn" data-pin="8">8</button>
-      <button class="pin-btn" data-pin="9">9</button>
-      <button class="pin-btn" data-pin="clear">⌫</button>
-      <button class="pin-btn" data-pin="0">0</button>
-      <button class="pin-btn gold" data-pin="submit">→</button>
+      <div class="pin-btn" ontouchstart="pinBtnPress(event,'1')" onclick="pinBtnPress(event,'1')">1</div>
+      <div class="pin-btn" ontouchstart="pinBtnPress(event,'2')" onclick="pinBtnPress(event,'2')">2</div>
+      <div class="pin-btn" ontouchstart="pinBtnPress(event,'3')" onclick="pinBtnPress(event,'3')">3</div>
+      <div class="pin-btn" ontouchstart="pinBtnPress(event,'4')" onclick="pinBtnPress(event,'4')">4</div>
+      <div class="pin-btn" ontouchstart="pinBtnPress(event,'5')" onclick="pinBtnPress(event,'5')">5</div>
+      <div class="pin-btn" ontouchstart="pinBtnPress(event,'6')" onclick="pinBtnPress(event,'6')">6</div>
+      <div class="pin-btn" ontouchstart="pinBtnPress(event,'7')" onclick="pinBtnPress(event,'7')">7</div>
+      <div class="pin-btn" ontouchstart="pinBtnPress(event,'8')" onclick="pinBtnPress(event,'8')">8</div>
+      <div class="pin-btn" ontouchstart="pinBtnPress(event,'9')" onclick="pinBtnPress(event,'9')">9</div>
+      <div class="pin-btn" ontouchstart="pinBtnPress(event,'clear')" onclick="pinBtnPress(event,'clear')">⌫</div>
+      <div class="pin-btn" ontouchstart="pinBtnPress(event,'0')" onclick="pinBtnPress(event,'0')">0</div>
+      <div class="pin-btn gold" ontouchstart="pinBtnPress(event,'submit')" onclick="pinBtnPress(event,'submit')">→</div>
     </div>
     <div class="login-error" id="loginError"></div>
   </div>
@@ -1555,6 +1555,25 @@ let pinBuffer = '';
 let currentUser = null;
 let taskView = 'mine'; // 'mine' or 'all'
 
+function pinBtnPress(e, val) {
+  e.preventDefault();
+  e.stopPropagation();
+  // Visual feedback
+  const el = e.currentTarget;
+  el.style.background = 'rgba(196,154,60,0.4)';
+  setTimeout(() => { el.style.background = ''; }, 150);
+  // Deduplicate: if this was a touchstart, mark it so the click doesn't double-fire
+  if (e.type === 'touchstart') {
+    el._touched = true;
+    setTimeout(() => { el._touched = false; }, 500);
+  } else if (e.type === 'click' && el._touched) {
+    return;
+  }
+  if (val === 'clear') pinClear();
+  else if (val === 'submit') pinSubmit();
+  else pinPress(val);
+}
+
 function pinPress(d) {
   if (pinBuffer.length >= 4) return;
   pinBuffer += d;
@@ -1568,35 +1587,7 @@ function updateDots() {
   }
 }
 
-function initPinPad() {
-  const pad = document.getElementById('pin-pad');
-  if (!pad) return;
-  pad.querySelectorAll('.pin-btn').forEach(btn => {
-    // Handle both touch and click to ensure cross-device compatibility
-    let touchHandled = false;
-    btn.addEventListener('touchstart', function(e) {
-      e.preventDefault(); // prevent ghost click delay on iOS
-      touchHandled = true;
-      const val = this.dataset.pin;
-      if (val === 'clear') pinClear();
-      else if (val === 'submit') pinSubmit();
-      else pinPress(val);
-      // Visual feedback
-      this.style.background = 'rgba(196,154,60,0.3)';
-      setTimeout(() => { this.style.background = ''; }, 150);
-    }, { passive: false });
-    btn.addEventListener('click', function(e) {
-      if (touchHandled) { touchHandled = false; return; } // already handled by touchstart
-      const val = this.dataset.pin;
-      if (val === 'clear') pinClear();
-      else if (val === 'submit') pinSubmit();
-      else pinPress(val);
-    });
-  });
-}
 
-// Initialize pin pad once DOM is ready
-document.addEventListener('DOMContentLoaded', initPinPad);
 async function pinSubmit() {
   const uid = document.getElementById('loginName').value;
   if (!uid) { showLoginError('Please select your name.'); pinBuffer=''; updateDots(); return; }
@@ -1944,98 +1935,101 @@ const TRAINING_MODULES = [
     id: 'premium-dog', name: 'Premium Dry Dog Food', icon: '🐕', color: '#f0e8d8',
     desc: 'Orijen, Acana, Open Farm, Fromm — key selling points & customer profiles',
     quiz: [
-      { q: 'Which brand uses "WholePrey ratios" and has 85%+ meat content?', opts: ['Fromm','Orijen','NutriSource','Diamond'], answer: 1, tip: 'Orijen is our highest-tier dog food — biologically appropriate with fresh/raw regional ingredients.' },
-      { q: 'A customer says their dog has itchy skin and they\'re feeding Purina. What\'s your FIRST move?', opts: ['Recommend Orijen immediately','Ask about the dog\'s age and breed first','Show them the allergy supplements','Tell them Purina is fine'], answer: 1, tip: 'Always ask about the dog before recommending — you need to know what you\'re working with.' },
-      { q: 'Open Farm is known for which key differentiator?', opts: ['Cheapest premium option','85% meat content','100% traceable ingredients / Certified Humane','Made in small batches in Wisconsin'], answer: 2, tip: 'Open Farm\'s traceability is their biggest story — customers can look up every ingredient\'s source.' },
-      { q: 'Fromm\'s 4-Star line is best for which type of customer?', opts: ['Dogs with allergies needing single protein','Owners who want to rotate proteins to reduce sensitivities','Budget-conscious shoppers','Large breed puppies only'], answer: 1, tip: 'The 4-Star rotation line is a great upsell — variety keeps dogs interested and reduces sensitivity build-up.' },
-      { q: 'A customer is worried about the price jump to premium food. What\'s the best response?', opts: ['Tell them cheaper food is probably fine','Apologize for the price','Explain you feed less because it\'s more nutrient-dense, and mention our return policy','Offer a discount'], answer: 2, tip: 'Never apologize for the price. Justify the value — smaller servings, better health, and our return policy removes all risk.' },
+      { q: 'A customer is currently feeding their dog Diamond Naturals and asks if there is anything better. What do you say?', opts: ['Diamond is fine — no need to change','Ask what issues, if any, they are seeing with their dog, then explain how brands like Fromm or Open Farm differ in ingredient quality','Tell them Orijen is the best and show them the biggest bag','Offer them a coupon for Diamond'], answer: 1, tip: 'Always start with a question, not a pitch. Find out what is going on with the dog first — then you have a reason to recommend something better.' },
+      { q: 'What makes Acana different from Orijen, even though they are made by the same company?', opts: ['Acana is organic, Orijen is not','Acana has lower meat content and is more affordable — a good step-up from mid-tier brands','Acana is grain-inclusive, Orijen is grain-free','There is no real difference'], answer: 1, tip: 'Acana is the accessible entry point into the Orijen family — same philosophy, slightly less meat content, lower price. Great bridge brand.' },
+      { q: 'NutriSource is best described as:', opts: ['A budget brand competing with Diamond','A mid-premium brand with strong digestibility and gut health focus — Good 4 Life system','An organic brand with traceable ingredients','A raw food brand'], answer: 1, tip: 'NutriSource Good 4 Life is their differentiator — prebiotics, probiotics, and selenium yeast for gut and immune health. Sells well for dogs with soft stools.' },
+      { q: 'A customer wants to switch their dog off chicken because they think it is causing allergies. What do you recommend from our dry food lineup?', opts: ['Tell them chicken allergy is rare and stay the course','Look at Fromm 4-Star or Natural Balance LID lines that offer novel proteins like duck, salmon, or lamb','Recommend any grain-free food','Suggest they see a vet before changing food'], answer: 1, tip: 'Novel protein rotation or LID diets are the go-to for suspected protein sensitivities. Fromm 4-Star and Natural Balance LID give you real options to offer.' },
+      { q: 'Our return policy on pet food exists primarily to:', opts: ['Limit our losses on opened bags','Remove the risk of trying something new — use it as a selling tool','Compete with Chewy on price','Satisfy California law'], answer: 1, tip: 'The return policy is a sales tool. When a customer hesitates on a $70 bag, saying we will take it back if their pet does not love it closes the sale.' },
     ]
   },
   {
     id: 'frozen-raw', name: 'Frozen & Raw Food', icon: '❄️', color: '#dbeaf5',
     desc: 'Open Farm gently cooked, Bones & Co, Bonnihill Farms (Fromm frozen), Raw Dynamic — how to sell raw',
     quiz: [
-      { q: 'Which frozen brand is the easiest entry point for raw-curious but cautious customers?', opts: ['Bones & Co','Raw Dynamic','Open Farm Gently Cooked','Bonnihill Farms (Fromm frozen)'], answer: 2, tip: 'Open Farm Gently Cooked is cooked — not raw — making it the easiest transition for hesitant owners.' },
-      { q: 'Bones & Co is best positioned for which type of customer?', opts: ['Budget shoppers','Committed raw feeders with health-issue dogs','Owners who want grain-inclusive','Senior dogs only'], answer: 1, tip: 'Bones & Co is a no-compromise raw brand — high fat, high protein, great for dogs with chronic health issues.' },
-      { q: 'What\'s the best way to upsell a frozen topper to an existing dry food customer?', opts: ['Tell them dry food isn\'t healthy','Suggest adding frozen as a topper on their current kibble to boost nutrition','Replace all their food at once','Only suggest it if they ask'], answer: 1, tip: 'Toppers are a low-risk upsell — customer keeps their kibble, adds frozen on top. Great first step into raw.' },
-      { q: 'Bonnihill Farms (Fromm frozen) is best described as:', opts: ['Budget raw brand','Mass-market frozen patties','Boutique raw brand — a differentiator for Foothill Feed','Gently cooked like Open Farm'], answer: 2, tip: 'Bonnihill Farms (Fromm frozen) is a lesser-known boutique brand — knowing it well sets us apart from big box stores.' },
+      { q: 'A customer says they want to try raw but are nervous about handling it. What is your best first move?', opts: ['Tell them raw is not for everyone','Recommend Open Farm Gently Cooked — it is cooked, not raw, so it is the easiest transition','Hand them a Raw Dynamic patty and explain how to thaw it','Suggest they just add kibble toppers instead'], answer: 1, tip: 'Open Farm Gently Cooked bridges the gap — it is real food, minimally processed, but cooked. Perfect for raw-curious but cautious customers.' },
+      { q: 'Raw Dynamic is best positioned for which type of customer?', opts: ['Owners who want a cooked option','Budget shoppers looking for the cheapest frozen option','Committed raw feeders who want a straightforward, high-quality raw patty','Customers whose dogs have grain sensitivities'], answer: 2, tip: 'Raw Dynamic is a clean, no-frills raw patty — great for experienced raw feeders who know what they want and just need a reliable source.' },
+      { q: 'What is the easiest way to introduce a frozen product to a customer who is happy with their current kibble?', opts: ['Replace all their kibble with frozen at once','Suggest adding a frozen topper a few times a week on top of their current food','Tell them frozen is only worth it if they go all-in','Wait for them to ask about it'], answer: 1, tip: 'The topper approach keeps their existing routine intact while adding real food nutrition. Low commitment, easy yes, great first step.' },
+      { q: 'Bonnihill Farms (Fromm frozen) is a differentiator for Foothill Feed because:', opts: ['It is the cheapest frozen option we carry','It is a boutique brand most big box stores do not carry — knowing it well sets us apart','It is the only raw brand approved by vets','It is made locally in Sacramento'], answer: 1, tip: 'Boutique brands like Bonnihill are a competitive advantage. When a customer cannot find it at PetSmart, they come to us — and keep coming back.' },
     ]
   },
   {
     id: 'cat-food', name: 'Cat Food', icon: '🐱', color: '#f0e8f5',
     desc: 'Orijen, Acana, Fromm, Open Farm, NutriSource — cat-specific recommendations',
     quiz: [
-      { q: 'Fromm\'s Game Bird cat food is unique because:', opts: ['It\'s the cheapest option','It features novel game bird protein — great for picky cats or sensitivities','It\'s grain-free only','It\'s a wet food only'], answer: 1, tip: 'Novel proteins like game bird reduce the chance of cats developing sensitivities from overexposure to common proteins.' },
-      { q: 'A customer\'s cat has been vomiting frequently. What\'s your first recommendation?', opts: ['Any wet food','Natural Balance LID single protein cat food','Orijen — highest quality fixes everything','More dry food to settle the stomach'], answer: 1, tip: 'Vomiting often signals sensitivity — a single protein LID diet helps isolate the trigger.' },
-      { q: 'Which cat brand allows ingredient traceability all the way to the farm?', opts: ['Diamond','Fromm','Open Farm','NutriSource'], answer: 2, tip: 'Open Farm\'s full traceability story works for cats too — same ethical sourcing as their dog line.' },
+      { q: 'A customer says their cat is extremely picky and refuses most foods. What do you recommend from our cat lineup?', opts: ['Any wet food will work','Fromm Gold or NutriSource — both have high palatability and variety to find what the cat accepts','Orijen — highest quality fixes everything','Tell them picky cats are a vet issue'], answer: 1, tip: 'Picky cats need options. Fromm Gold has a wide variety of proteins and formats. NutriSource is also highly palatable. Start with variety, find what they eat.' },
+      { q: 'Why is wet food important for cats specifically, compared to dogs?', opts: ['It is not — cats do fine on dry food only','Cats have a low thirst drive and can become chronically dehydrated on dry food alone — wet food adds critical moisture','Wet food is only important for senior cats','Cats prefer the taste but nutritionally it does not matter'], answer: 1, tip: 'Cats evolved as desert animals with low thirst drive. Dry-only diets are a leading cause of urinary and kidney issues. Wet food is a health recommendation, not just a preference.' },
+      { q: 'Natural Balance LID cat food is best for which type of customer?', opts: ['Customers who want the highest meat content','Cats with suspected food sensitivities — limited ingredients isolate the protein source','Budget shoppers','Kittens under 6 months'], answer: 1, tip: 'LID means one protein, minimal ingredients — the goal is to eliminate variables and identify what the cat can tolerate. Recommend when a customer reports digestive issues or chronic vomiting.' },
     ]
   },
   {
     id: 'poultry', name: 'Poultry & Chickens', icon: '🐔', color: '#f5f0e0',
     desc: 'Layer feeds, scratch, chick starter, supplements — what goes when',
     quiz: [
-      { q: 'A customer\'s hens have stopped laying. What\'s the first thing to ask?', opts: ['What brand of feed are they using?','How old are the hens and what time of year is it?','How big is their coop?','Do they have a rooster?'], answer: 1, tip: 'Age and season are the #1 factors in egg production — old hens and short winter days are common culprits before blaming feed.' },
-      { q: 'What\'s the difference between Layer Pellets and Layer Crumbles?', opts: ['Crumbles are for chicks, pellets for adults','Same nutrition — crumbles are smaller pieces, some hens prefer one over the other','Pellets have more protein','Crumbles are organic'], answer: 1, tip: 'We carry both in 50lb bags — same nutritional profile, just particle size differs. Let the customer choose based on their flock\'s preference.' },
-      { q: 'At what age should chicks switch from Chick Starter to Layer Feed?', opts: ['4 weeks','8 weeks','18-20 weeks (when they start laying)','6 months'], answer: 2, tip: 'Layer feed has calcium which can damage young kidneys — always switch at point-of-lay around 18-20 weeks.' },
-      { q: 'Oyster Shell is given to hens for what reason?', opts: ['Protein supplement','Calcium supplement for strong eggshells','Digestive grit','Parasite prevention'], answer: 1, tip: 'We stock Oyster Shell 50lb — a great add-on sell when someone buys layer feed. Soft shells? Oyster shell fixes it.' },
+      { q: 'A new chicken owner comes in and says they just got baby chicks. What feed do they need?', opts: ['Layer Pellets 50lb','Chick Starter — medicated if they have not been vaccinated for coccidiosis, unmedicated if they have','Scratch Grains','All-Purpose Crumbles'], answer: 1, tip: 'Chick Starter is non-negotiable for baby chicks. Medicated starter contains Amprolium which helps prevent coccidiosis — always ask if the chicks were vaccinated.' },
+      { q: 'What is scratch grain used for?', opts: ['It is a complete feed for laying hens','A treat and supplement — not a complete diet. Feeding too much dilutes protein intake and reduces egg production','The primary protein source for backyard flocks','A calcium supplement'], answer: 1, tip: 'Scratch is a treat, not a meal. Customers often overfeed it thinking it is good for their hens — too much drops egg production. Explain the difference.' },
+      { q: 'A customer with laying hens asks why egg production has slowed in winter. What is the most likely cause?', opts: ['They need more expensive feed','Fewer daylight hours — hens need 14-16 hours of light to maintain peak production','The hens are sick','They need more scratch'], answer: 1, tip: 'Light drives the laying cycle. Short winter days are the most common cause of slowed production. Suggest a coop light on a timer as the fix — and confirm they are on a proper layer feed.' },
+      { q: 'What is the purpose of grit for backyard chickens?', opts: ['Calcium for eggshells','Chickens have no teeth — grit sits in the gizzard and grinds up food. Required for chickens who eat anything other than commercial feed','A treat to keep them occupied','Parasite prevention'], answer: 1, tip: 'Any chicken that free ranges or eats scratch, fruits, or vegetables needs grit. Chickens on 100% commercial pelleted feed can skip it — but most backyard flocks need it.' },
+      { q: 'A customer says their hens are molting and losing feathers. Which feed do you recommend?', opts: ['Farmers 20% Lay Pellet','Bar Ale 20% Poultry Pellet','Bar Ale 20% Complete Flock Pellet','Scratch & Peck 18% Layer Mash'], answer: 0, tip: 'Molting hens need extra protein to regrow feathers. Farmers 20% Lay Pellet is a great first recommendation — Bar Ale 20% Poultry or Complete Flock Pellet also work well. Scratch & Peck 18% Mash is the organic option for clean-label customers.' },
     ]
   },
   {
     id: 'goat-sheep', name: 'Goats & Sheep', icon: '🐐', color: '#e8f0e8',
     desc: 'Goat ration, minerals, dewormers, milk replacers — goat and sheep basics',
     quiz: [
-      { q: 'A customer\'s goat has loose stools. What do you recommend first?', opts: ['Goat VAC CDT vaccine','Goat Electrolyte 16oz + Probiotics and check for coccidia','More hay','Copasure copper bolus'], answer: 1, tip: 'Loose stools in goats = electrolytes first to prevent dehydration, then investigate cause — often coccidia, diet change, or stress.' },
-      { q: 'What is Copasure used for in goats?', opts: ['Worming','Copper supplementation — prevents copper deficiency','CDT vaccination','Milk production boost'], answer: 1, tip: 'Copper deficiency is common in goats — faded coat, poor condition, fish tail. Copasure bolus is the go-to fix.' },
-      { q: 'CDT vaccine protects goats against:', opts: ['Worms and parasites','Clostridium perfringens types C & D and Tetanus','Respiratory illness','Copper toxicity'], answer: 1, tip: 'CDT is the core goat vaccine — Enterotoxemia (overeating disease) and Tetanus. Especially critical for kids and pregnant does.' },
-      { q: 'A customer has a new baby goat (kid) that isn\'t nursing. What do they need?', opts: ['Goat Ration 50lb','Kid Milk Replacer + Calf Milk Bottle + Calf Nipple','Goat Electrolyte only','Manna Pro Goat Treat'], answer: 1, tip: 'We carry Kid Milk Replacer 8lb + Calf Milk Bottles and Nipples. Bundle sell — they need all three.' },
+      { q: 'Why should you never feed sheep a mineral block or supplement designed for goats?', opts: ['Sheep prefer a different flavor','Goat minerals often contain added copper, which is toxic to sheep at high levels','Goat minerals are too expensive for sheep','There is no difference — they can share'], answer: 1, tip: 'Copper toxicity is a real and serious risk in sheep. Always confirm the species before recommending any mineral supplement — goat and sheep formulas are not interchangeable.' },
+      { q: 'A customer is unsure whether to worm their goat. What is the correct guidance?', opts: ['Worm monthly as a preventive routine','Recommend fecal testing or FAMACHA scoring first — strategic deworming reduces resistance buildup','Tell them to worm immediately just in case','Deworming is not necessary for goats'], answer: 1, tip: 'Blanket deworming is outdated and builds parasite resistance. The best practice is targeted deworming based on FAMACHA eye scoring or fecal egg counts. You can point them to their vet for guidance.' },
+      { q: 'What is the purpose of CDT vaccine in goats?', opts: ['Prevents worms and internal parasites','Protects against Clostridium perfringens types C and D (enterotoxemia) and Tetanus — the core goat vaccine','Prevents respiratory illness','Improves milk production'], answer: 1, tip: 'CDT is the one vaccine every goat owner should be giving. Enterotoxemia kills fast — especially in kids and animals on grain. If they are not vaccinating, this is the conversation to have.' },
+      { q: 'A customer asks what Copasure is used for. What do you tell them?', opts: ['It is a dewormer for goats','It is a slow-release copper bolus for goats — corrects copper deficiency which causes faded coat, poor condition, and fish tail','It is a CDT booster','It is a probiotic paste'], answer: 1, tip: 'Copper deficiency is common in goats, especially in certain soil regions. Signs: sunbleached or reddish coat, rough hair, fish tail (bare tail tip). Copasure bolus is the standard fix.' },
+      { q: 'What mineral salt block do we recommend for goats and livestock?', opts: ['Plain white salt block','Himalayan pink salt','Redmond 10 mineral salt block','Sweetlix block'], answer: 2, tip: 'Redmond 10 is our go-to mineral salt block — natural, mined in Utah, with trace minerals goats and livestock need. Always suggest it as an add-on when someone buys goat feed.' },
     ]
   },
   {
     id: 'horses', name: 'Horses & Equine', icon: '🐎', color: '#f0ece0',
     desc: 'Horse feeds, hay, supplements, dewormers, fly control — equine essentials',
     quiz: [
-      { q: 'A customer has a senior horse losing weight. What feed do you recommend?', opts: ['Sweet Cob','Bar Ale (B/A) Equine Esteem Senior 50lb + LMF Digest 911','Beet Pulp only','Scratch feed'], answer: 1, tip: 'Senior horses often struggle to hold weight — high-fat senior feed plus a digestive supplement like LMF Digest 911 is the combo.' },
-      { q: 'Beet Pulp Shredded is used for horses primarily to:', opts: ['Add protein to the diet','Add highly digestible fiber and calories — great for hard keepers','Replace hay','Treat colic'], answer: 1, tip: 'Beet pulp is a safe, highly digestible fiber source — great for horses that need extra calories without the sugar of grain.' },
-      { q: 'Equi Aid Psyllium Fiber is given to horses for what purpose?', opts: ['Joint support','Prevent sand colic by clearing sand from the gut','Fly repellent','Coat conditioning'], answer: 1, tip: 'Sand colic is a real risk in our region — Psyllium fiber helps move sand through the digestive tract.' },
-      { q: 'Which fly control product is a feed-through option (added to feed)?', opts: ['Equiderma Neem Spray','Equicare Flysect','Equitrol II','Clear Pet Horse Spray'], answer: 2, tip: 'Equitrol II is a feed-through fly control — goes in the feed, stops fly larvae from developing in manure.' },
+      { q: 'A customer has a horse that is an easy keeper and prone to founder. What feed approach do you recommend?', opts: ['Sweet Cob — high energy for active horses','LMF Low-Carb Stage 1 or LMF Gentle Balance — designed for metabolic horses needing low sugar and starch','Beet Pulp only','Bar Ale Equine Esteem Senior'], answer: 1, tip: 'Founders and metabolic horses cannot handle high-sugar feeds. LMF Low-Carb Stage 1 and Gentle Balance are formulated specifically to keep sugar and starch low — know these two products.' },
+      { q: 'What is the primary benefit of adding Beet Pulp Shredded to a horse\'s diet?', opts: ['High protein to build muscle','Highly digestible fiber and safe calories — great for hard keepers without the sugar spike of grain','Replaces hay entirely','Treats colic directly'], answer: 1, tip: 'Beet pulp is a safe calorie source — fiber-based energy without spiking blood sugar. Soak it before feeding. Great for older horses or those that struggle to hold weight.' },
+      { q: 'A customer asks about fly control options. Which product goes in the horse\'s feed?', opts: ['Equicare Flysect Concentrate','Equiderma Neem Spray','Equitrol II feed-through fly control','Clear Pet Horse Spray'], answer: 2, tip: 'Equitrol II is a feed-through product — the active ingredient passes through the horse and prevents fly larvae from developing in the manure. Best used as part of a broader fly management program.' },
+      { q: 'LMF Digest 911 is recommended for horses experiencing:', opts: ['Joint stiffness and arthritis','Digestive upset, loose manure, stress-related gut issues, or after a diet change','Low energy and poor performance','Fly infestations'], answer: 1, tip: 'LMF Digest 911 is a digestive support supplement — probiotics, prebiotics, and digestive enzymes. Great recommendation any time a horse is going through a transition, showing loose stools, or under stress.' },
     ]
   },
   {
     id: 'supplements', name: 'Dog Supplements', icon: '💊', color: '#f5ece8',
     desc: 'Fera, Grizzly, Bailey\'s CBD, NaturVet — when and how to recommend',
     quiz: [
-      { q: 'A customer mentions their dog has a dull coat and is shedding excessively. What do you recommend?', opts: ['More dry food','Grizzly Salmon Oil or Grizzly Pollock Oil + possibly Fera Skin & Coat Goat Milk','A bath','NaturVet ArthriSoothe'], answer: 1, tip: 'Dull coat = omega-3 deficiency. Grizzly fish oils are our top skin & coat supplement — easy add-on to any purchase.' },
-      { q: 'Fera supplements use what unique delivery format that makes them stand out?', opts: ['Pills and capsules','Goat milk powder — high palatability, natural base','Beef-flavored chews','Injectable'], answer: 1, tip: 'Fera\'s goat milk format is easy to feed and highly palatable — dogs love it. Great for picky supplement-avoiders.' },
-      { q: 'Bailey\'s CBD line is best for which situations?', opts: ['Nutritional deficiencies','Hip & joint pain, anxiety, and general wellness support','Skin conditions only','Puppies under 6 months'], answer: 1, tip: 'Bailey\'s has three main products: Hip & Joint, Omega CBD (skin/coat/wellness), and Calming CBD Yummies for anxious dogs.' },
-      { q: 'NaturVet ArthriSoothe Gold is recommended for:', opts: ['Puppies needing growth support','Senior or arthritic dogs — joint support with glucosamine, chondroitin, and MSM','Dogs with digestive issues','Allergy relief'], answer: 1, tip: 'ArthriSoothe Gold is our top joint supplement — the gold formula adds additional anti-inflammatory support beyond basic glucosamine.' },
+      { q: 'A customer mentions their older dog is slowing down on walks and seems stiff in the morning. What do you recommend?', opts: ['More exercise','NaturVet ArthriSoothe Gold — glucosamine, chondroitin, and MSM for joint support','Grizzly Salmon Oil for coat only','Bailey\'s Calming CBD Yummies'], answer: 1, tip: 'Morning stiffness in an older dog is a classic joint issue. ArthriSoothe Gold is our top recommendation — the Gold formula adds enhanced anti-inflammatory support.' },
+      { q: 'What makes Fera supplements stand out from standard dog supplements?', opts: ['They are the cheapest option','They use a goat milk powder base — highly palatable and easy to feed, even for picky dogs','They are the only vet-recommended brand we carry','They come in injectable form'], answer: 1, tip: 'The goat milk delivery format is Fera\'s key differentiator — it mixes into food easily and dogs actually eat it. Great for customers who struggle to get their dog to take supplements.' },
+      { q: 'Grizzly Salmon Oil vs Grizzly Pollock Oil — what is the practical difference for a customer?', opts: ['Pollock is higher quality','Salmon oil has more omega-3s — Pollock is a sustainable, more affordable alternative with similar benefits','Salmon oil is for cats only','There is no difference'], answer: 1, tip: 'Both are excellent omega-3 sources. Salmon oil is the classic — Pollock is a great option for customers who want sustainability or a slightly lower price point. Either one works for skin, coat, and inflammation.' },
+      { q: 'A customer\'s dog gets very anxious during thunderstorms and fireworks. What do you recommend?', opts: ['NaturVet ArthriSoothe Gold','Bailey\'s Calming CBD Yummies or NaturVet Quiet Moments','Grizzly Salmon Oil','Fera Immune Support'], answer: 1, tip: 'Situational anxiety is a common ask — especially around July 4th. Bailey\'s Calming CBD Yummies and NaturVet Quiet Moments are our two go-to recommendations. Know both.' },
     ]
   },
   {
     id: 'hand-selling', name: 'Hand Selling Skills', icon: '🤝', color: '#e8f0e8',
     desc: 'How to approach customers, ask the right questions, and close the sale',
     quiz: [
-      { q: 'What\'s the very first thing you should do when a customer asks about dog food?', opts: ['Show them the most expensive option','Ask about their dog — age, breed, current food, any issues','Recommend what\'s on sale','Check if they have a rewards card'], answer: 1, tip: 'You can\'t make a good recommendation without knowing the dog. Always ask first, recommend second.' },
-      { q: 'A customer says "this food is too expensive." What do you say?', opts: ['Okay, here\'s a cheaper option','I understand — you actually feed less because it\'s more nutrient-dense. And if your dog doesn\'t love it, we\'ll take it back.','Nothing — just let them decide','Tell them cheap food causes vet bills'], answer: 1, tip: 'Never surrender on price without justifying value. Feeding less + our return policy removes all risk.' },
-      { q: 'What signals that a customer might be ready to upgrade their pet\'s food?', opts: ['They buy the same thing every time','They mention itchy skin, low energy, loose stools, or ask "what\'s the best"','They seem in a hurry','They buy treats'], answer: 1, tip: 'Pain points are your opening. Any complaint about the pet\'s condition is a signal they\'re open to a change.' },
-      { q: 'When recommending a product, how many options should you show a customer?', opts: ['As many as possible so they have choices','One specific recommendation based on what they told you','Two options — always give a backup','Whatever is closest to the door'], answer: 1, tip: 'One confident recommendation beats a wall of options. Too many choices = no decision. Pick the best fit and walk them to it.' },
+      { q: 'A customer walks in and heads straight to the dog food aisle. What do you do?', opts: ['Let them browse — they will ask if they need help','Give them 30-60 seconds to land, then approach with a warm greeting and ask what they are shopping for today','Immediately recommend your top product','Ask if they have a rewards card first'], answer: 1, tip: 'The goal is a warm approach, not an ambush. Give them a moment to orient, then engage. The opener should be low-pressure — you are there to help, not sell.' },
+      { q: 'A customer says they just want to look around. What is the right move?', opts: ['Walk away and do not engage again','Say sure, and let them know you are around if they have any questions — then check back in after a few minutes','Immediately pitch your best product','Ask what budget they are working with'], answer: 1, tip: 'Respect the space. A soft check-in after a couple of minutes shows you are available without being pushy. Most browsers become buyers when they feel no pressure.' },
+      { q: 'You are recommending a food and the customer seems interested but hesitant. What is the most effective thing to say?', opts: ['Tell them to take their time and come back later','Mention the return policy — if their pet does not love it, bring it back','Offer a discount to close','Tell them everyone buys this one'], answer: 1, tip: 'The return policy removes risk. When someone is on the fence about a $60-80 bag, knowing they can return it if their pet rejects it almost always closes the sale.' },
+      { q: 'A customer is clearly in a hurry. How do you adjust your approach?', opts: ['Give them the full product story anyway — they need the information','Read the cue — be efficient, ask one targeted question, get them to the right product fast, and let them go','Do not engage at all','Only help if they ask'], answer: 1, tip: 'Reading the customer matters as much as knowing the product. A rushed customer needs confidence and efficiency — one good question, one clear recommendation, get them out the door happy.' },
     ]
   },
   {
     id: 'store-ops', name: 'Store Operations', icon: '🏪', color: '#ece8f0',
     desc: 'Return policy, store standards, customer service expectations',
     quiz: [
-      { q: 'What is Foothill Feed\'s return policy on pet food?', opts: ['No returns on opened food','30-day receipt required','If the pet doesn\'t love it, bring it back — we\'ll make it right','Exchange only, no refunds'], answer: 2, tip: 'Our return policy is a sales tool. Use it proactively to remove a hesitant customer\'s risk when trying new food.' },
-      { q: 'A customer calls to complain about a product. What\'s the right first response?', opts: ['Transfer them to the manager','Listen fully, apologize for the experience, and ask what we can do to make it right','Tell them to check the brand\'s website','Ask for their receipt number'], answer: 1, tip: 'Listen first, always. Never be defensive. A complaint handled well turns into a loyal customer.' },
-      { q: 'Foothill Feed is positioned as:', opts: ['Cheapest feed store in the area','A clean, boutique-style feed store with premium and organic offerings and exceptional service','A bulk warehouse store','A vet-recommended medical supplier'], answer: 1, tip: 'We\'re not competing on price — we compete on knowledge, service, and product quality. That\'s our identity.' },
+      { q: 'A customer wants to return an opened bag of dog food but does not have a receipt. What do you do?', opts: ['Refuse the return — no receipt, no return','Look up the purchase in Retail Pro using their phone number or Astro account, then process the return per our policy','Tell them to come back with the receipt','Only offer store credit without a receipt'], answer: 1, tip: 'We can almost always look up a purchase in Retail Pro or Astro. The goal is to make it right — do not let a missing receipt be the reason a customer leaves unhappy.' },
+      { q: 'A customer compliments the store and says it feels different from other feed stores. What is the right response?', opts: ['Say thank you and move on','Agree and briefly explain what sets us apart — clean, boutique feel, premium products, people who actually know what they are talking about','Tell them about our rewards program immediately','Offer them a discount'], answer: 1, tip: 'That is a golden moment. Reinforce the brand story — we are intentionally different. It builds loyalty and gives them something to tell their friends.' },
+      { q: 'You notice the front of the store is getting cluttered and a customer is browsing the area. What do you do?', opts: ['Wait until your shift ends to straighten up','Step in and tidy it while the customer is there — our standard is a clean, boutique feel at all times','Let the closing shift handle it','Only clean if a manager asks'], answer: 1, tip: 'The store standard is everyone\'s responsibility. If you see it, fix it — especially with a customer in view. First impressions matter every single visit.' },
+      { q: 'A customer is checking out and their Astro rewards account is incomplete. What do you do?', opts: ['Skip it and finish the sale','Ask for all their info at once to get it done quickly','Naturally complete one field at a time as the transaction flows — name, then phone, then email if they offer it','Tell them to sign up online later'], answer: 2, tip: 'Never make a customer feel like they are being data-mined. Collect rewards info conversationally — one piece at a time during the natural flow of checkout. No pressure, no script.' },
     ]
   },
   {
     id: 'cattle-pigs', name: 'Cattle, Pigs & Livestock', icon: '🐄', color: '#f0e8e0',
     desc: 'Cattle feed, calf care, pig feed, and general livestock basics',
     quiz: [
-      { q: 'Corid Solution is used in calves to treat:', opts: ['Respiratory infection','Coccidiosis — a parasitic gut disease causing bloody scours','Copper deficiency','Pink eye'], answer: 1, tip: 'Coccidiosis is a common and serious disease in young calves — Corid in the water is the standard treatment.' },
-      { q: 'A customer has a calf that won\'t nurse. What do they need?', opts: ['Calf Manna only','Farmers 24/18 Calf Milk Replacer + Calf Milk Bottle + Snap-On Nipple','Just electrolytes','Steer Finisher feed'], answer: 1, tip: 'Bundle sell — a non-nursing calf needs all three: milk replacer, bottle, and nipple. We carry all of it.' },
-      { q: 'What\'s the difference between B/A Organic Pork Grower and B/A Non-GMO Pork Grower?', opts: ['They\'re the same product','Organic is USDA certified organic — no synthetic pesticides/fertilizers. Non-GMO is non-GMO but not fully organic.','Non-GMO has more protein','Organic is only for show pigs'], answer: 1, tip: 'Both are quality pig growers — organic customers pay more for the full certification. We stock both.' },
+      { q: 'A customer is finishing pigs for market and asks what feed to use. What do you recommend?', opts: ['B/A Hog Grower only','B/A Pork Finisher — higher energy formula designed for the final weeks before market weight','Goat Ration — works for pigs too','Scratch Feed'], answer: 1, tip: 'Finisher feeds are formulated for maximum efficient weight gain in the final stretch. Know the difference between grower and finisher — it matters to serious hog producers.' },
+      { q: 'What is the difference between B/A Organic Pork Grower and B/A Non-GMO Pork Grower?', opts: ['They are the same product with different labels','Organic is USDA certified — no synthetic pesticides or fertilizers. Non-GMO is non-GMO verified but not fully certified organic','Non-GMO has more protein','Organic is only for show pigs'], answer: 1, tip: 'Both are quality pig growers — organic customers pay more for the full USDA certification. We stock both so you can match the customer to the product that fits their operation.' },
+      { q: 'A customer has a newborn calf that is not getting colostrum from its mother. What is the immediate priority?', opts: ['Start on calf grain right away','Get colostrum replacer into the calf within the first few hours — the gut can only absorb antibodies for a very limited time window','Start Corid treatment immediately','Feed regular calf milk replacer'], answer: 1, tip: 'The colostrum window is critical — calves can only absorb maternal antibodies through the gut for the first 12-24 hours of life. After that, colostrum has nutritional value but the immunity transfer window closes. This is urgent.' },
     ]
   },
 ];
