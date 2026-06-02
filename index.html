@@ -728,7 +728,10 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
     <!-- TRAINING -->
     <div class="page" id="page-training">
       <div style="margin-bottom:16px;">
-        <div class="section-label">Your Training Progress</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <div class="section-label" style="margin-bottom:0;">Your Training Progress</div>
+          <button id="reset-training-btn" onclick="resetAllTraining()" style="display:none;background:#c0392b;color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:12px;font-family:'DM Sans',sans-serif;cursor:pointer;font-weight:500;">Reset All Progress</button>
+        </div>
         <div class="progress-bar" style="height:10px;margin-bottom:4px;"><div class="progress-fill" id="overall-progress" style="width:0%"></div></div>
         <div style="font-size:12px;color:#888;" id="progress-label">0 of 10 modules complete</div>
       </div>
@@ -2045,7 +2048,24 @@ async function setModuleStatus(moduleId, status) {
   await saveTraining(currentUser.id, moduleId, status);
 }
 
+async function resetAllTraining() {
+  if (!confirm('Reset ALL training progress for every staff member? This cannot be undone.')) return;
+  try {
+    const { error } = await _sb.from('ff_training').delete().neq('train_id', '__placeholder__');
+    if (error) throw error;
+    _cache.training = {};
+    renderTraining();
+    alert('✅ All training progress has been reset.');
+  } catch (e) {
+    alert('Error resetting training: ' + e.message);
+  }
+}
+
 function renderTraining() {
+  // Show reset button only for Jeff
+  const resetBtn = document.getElementById('reset-training-btn');
+  if (resetBtn) resetBtn.style.display = (currentUser && currentUser.id === 'jeff') ? 'block' : 'none';
+
   const progress = getUserProgress();
   const passed = Object.values(progress).filter(v=>v==='passed').length;
   const total = TRAINING_MODULES.length;
