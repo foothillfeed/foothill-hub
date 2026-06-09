@@ -1711,6 +1711,22 @@ async function launchApp() {
   updateMsgBanner();
   checkUrgentMessages();
 
+  // Background refresh every 60s so new messages appear while logged in
+  if (!window._msgPoll) {
+    window._msgPoll = setInterval(async () => {
+      if (!currentUser) return;
+      const before = unreadMessages().length;
+      await refreshMessages();
+      updateMsgBadge();
+      updateMsgBanner();
+      // New urgent messages while logged in still pop up
+      if (unreadMessages().filter(m => m.urgent).length > 0) checkUrgentMessages();
+      // Refresh the open inbox if user is on the Messages page
+      const pg = document.getElementById('page-messages');
+      if (pg && pg.classList.contains('active') && unreadMessages().length !== before) renderMessages();
+    }, 60000);
+  }
+
   // Check weekly summary after a short delay
   setTimeout(checkShowWeeklySummary, 1200);
   checkAnthropicKey();
@@ -1758,7 +1774,7 @@ function showPage(id) {
   if (pg) {
     pg.classList.add('active');
     if (id==='tasks') { renderTasks(); renderLowStockMyFlags(); }
-    if (id==='messages') { renderMessages(); markMessagesRead(); }
+    if (id==='messages') { renderMessages(); refreshMessages().then(() => { renderMessages(); markMessagesRead(); }); }
     if (id==='training') renderTraining();
     if (id==='manager') { populateEmpDropdowns(); renderStaffMgmt(); renderManager(); initTimesheetDates(); renderTimesheet(); renderAnalytics(); renderMgrLowStock(); initTcEditDate(); renderTimeclockEditor(); }
     if (id==='self-review') renderSelfReview();
@@ -2373,6 +2389,14 @@ function populateEmpDropdowns() {
 // ══════════════════════════════════════════
 // MESSAGES (team board + direct messages)
 // ══════════════════════════════════════════
+// Refetch messages from Supabase so new messages appear without re-login
+async function refreshMessages() {
+  try {
+    const rows = await sbGet('ff_messages');
+    _cache.messages = (rows || []).map(m => ({ id:m.msg_id, fromUid:m.from_uid, fromName:m.from_name, toUid:m.to_uid||'', body:m.body, urgent:!!m.urgent, readBy:m.read_by||[], archived:!!m.archived, createdAt:m.created_at }));
+  } catch(e) { console.error('refreshMessages failed', e); }
+}
+
 function timeAgoMsg(iso) {
   if (!iso) return '';
   const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
