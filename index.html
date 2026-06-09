@@ -486,17 +486,6 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
     <div class="login-sub">Staff Hub · Loomis, CA</div>
     <select class="name-select" id="loginName">
       <option value="">Select your name…</option>
-      <option value="jeff">Jeff</option>
-      <option value="rick">Rick</option>
-      <option value="danny">Danny</option>
-      <option value="kristi">Kristi</option>
-      <option value="joe">Joe</option>
-      <option value="max">Max</option>
-      <option value="gage">Gage</option>
-      <option value="blake">Blake</option>
-      <option value="ryan">Ryan</option>
-      <option value="maureen">Maureen</option>
-      <option value="wendy">Wendy</option>
     </select>
     <div class="pin-display" id="pinDisplay">
       <div class="pin-dot" id="d0"></div>
@@ -574,17 +563,6 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
               </select>
               <select class="form-select" id="new-task-assignee" style="width:auto;">
                 <option value="">👥 Everyone</option>
-                <option value="jeff">Jeff</option>
-                <option value="rick">Rick</option>
-                <option value="danny">Danny</option>
-                <option value="maureen">Maureen</option>
-                <option value="kristi">Kristi</option>
-                <option value="joe">Joe</option>
-                <option value="max">Max</option>
-                <option value="gage">Gage</option>
-                <option value="blake">Blake</option>
-                <option value="ryan">Ryan</option>
-                <option value="wendy">Wendy</option>
               </select>
               <button class="btn btn-primary" onclick="addTask()">Add Task</button>
             </div>
@@ -760,17 +738,6 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
             </select>
             <select class="form-select" id="rec-assignee" style="width:auto;">
               <option value="">👥 Everyone</option>
-              <option value="jeff">Jeff</option>
-              <option value="rick">Rick</option>
-              <option value="danny">Danny</option>
-              <option value="maureen">Maureen</option>
-              <option value="kristi">Kristi</option>
-              <option value="joe">Joe</option>
-              <option value="max">Max</option>
-              <option value="gage">Gage</option>
-              <option value="blake">Blake</option>
-              <option value="ryan">Ryan</option>
-              <option value="wendy">Wendy</option>
             </select>
             <select class="form-select" id="rec-freq" style="width:auto;" onchange="toggleRecDays()">
               <option value="daily">Every Day</option>
@@ -1020,6 +987,28 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
         <button class="btn btn-outline btn-sm" onclick="openSummary()">📋 View Weekly Summary</button>
       </div>
       <div class="stat-grid" id="mgr-stats"></div>
+
+      <!-- MANAGE STAFF -->
+      <div class="card">
+        <div class="card-title">Manage Staff</div>
+        <div class="card-sub">Add new employees or deactivate departed ones. Deactivating removes them from login, schedules, and training — but keeps all their timesheet and report history.</div>
+        <div id="staff-mgmt-list"></div>
+        <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px;">
+          <div style="font-weight:500;margin-bottom:10px;">Add New Employee</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <input class="form-input" id="new-emp-name" placeholder="First name" style="width:140px;">
+            <select class="form-select" id="new-emp-role" style="width:auto;">
+              <option value="staff">Staff</option>
+              <option value="lead">Lead</option>
+              <option value="manager">Manager</option>
+            </select>
+            <input class="form-input" id="new-emp-pin" placeholder="4-digit PIN" maxlength="4" inputmode="numeric" style="width:110px;">
+            <button class="btn btn-primary" onclick="addEmployee()">+ Add Employee</button>
+          </div>
+          <div id="staff-mgmt-msg" style="font-size:13px;min-height:18px;margin-top:8px;"></div>
+        </div>
+      </div>
+
       <div class="card">
 
       <!-- TIMECLOCK EDITOR -->
@@ -1029,17 +1018,6 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
         <div class="tc-edit-filter">
           <select class="form-select" id="tc-edit-emp" style="width:auto;" onchange="renderTimeclockEditor()">
             <option value="all">All Employees</option>
-            <option value="jeff">Jeff</option>
-            <option value="rick">Rick</option>
-            <option value="danny">Danny</option>
-            <option value="maureen">Maureen</option>
-            <option value="kristi">Kristi</option>
-            <option value="joe">Joe</option>
-            <option value="max">Max</option>
-            <option value="gage">Gage</option>
-            <option value="blake">Blake</option>
-            <option value="ryan">Ryan</option>
-            <option value="wendy">Wendy</option>
           </select>
           <input type="date" class="form-input" id="tc-edit-date" style="width:auto;" onchange="renderTimeclockEditor()">
           <button class="btn btn-outline btn-sm" onclick="renderTimeclockEditor()">Filter</button>
@@ -1070,17 +1048,6 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
         <div class="filter-row">
           <select class="form-select" id="ts-employee" style="width:auto;">
             <option value="all">All Employees</option>
-            <option value="jeff">Jeff</option>
-            <option value="rick">Rick</option>
-            <option value="danny">Danny</option>
-            <option value="kristi">Kristi</option>
-            <option value="joe">Joe</option>
-            <option value="max">Max</option>
-            <option value="gage">Gage</option>
-            <option value="blake">Blake</option>
-            <option value="ryan">Ryan</option>
-          <option value="maureen">Maureen</option>
-          <option value="wendy">Wendy</option>
           </select>
           <input type="date" class="form-input" id="ts-from" style="width:auto;">
           <input type="date" class="form-input" id="ts-to" style="width:auto;">
@@ -1362,8 +1329,14 @@ async function loadAllData(uid) {
     ]);
 
     // Map Supabase rows to app format
+    // allUsers = everyone ever (for historical name lookups); users = active only (for dropdowns, schedule, training)
+    _cache.allUsers = {};
     _cache.users = {};
-    users.forEach(u => { _cache.users[u.uid] = { name:u.name, role:u.role, pin:u.pin, color:u.color }; });
+    users.forEach(u => {
+      const rec = { name:u.name, role:u.role, pin:u.pin, color:u.color, active: u.active !== false };
+      _cache.allUsers[u.uid] = rec;
+      if (u.active !== false) _cache.users[u.uid] = rec;
+    });
 
     _cache.tasks = tasks.map(t => ({ id:t.task_id, text:t.task_text, priority:t.priority, assignee:t.assignee||'', done:t.done, date:t.date, recId:t.rec_id||'', addedBy:t.added_by, addedAt:t.added_at, doneBy:t.done_by, doneAt:t.done_at }));
 
@@ -1549,7 +1522,8 @@ function getUsers() {
   if (_cache.users && Object.keys(_cache.users).length > 0) return _cache.users;
   return DEFAULT_USERS;
 }
-function getUser(id) { return getUsers()[id]; }
+// Falls back to allUsers so deactivated employees' names still show in old timesheets/reports
+function getUser(id) { return getUsers()[id] || (_cache.allUsers && _cache.allUsers[id]) || null; }
 
 // ══════════════════════════════════════════
 // LOGIN
@@ -1596,23 +1570,22 @@ async function pinSubmit() {
   if (!uid) { showLoginError('Please select your name.'); pinBuffer=''; updateDots(); return; }
 
   // First try local defaults (instant), then verify against Supabase
-  const localUser = DEFAULT_USERS[uid];
+  const localUser = _loginUsers[uid] || DEFAULT_USERS[uid];
   const enteredPin = pinBuffer;
   pinBuffer = '';
   updateDots();
 
   if (!localUser) { showLoginError('User not found.'); return; }
 
-  // Check against local defaults first for instant feedback
+  // Check against the roster loaded at page load (or local defaults)
   if (enteredPin !== localUser.pin) {
-    // Also check Supabase in case PIN was changed
+    // Also check Supabase live in case PIN was changed since page load
     try {
       showLoginError('Checking…');
       const sbUsers = await sbGet('ff_users');
-      const sbUser = sbUsers.find(u => u.uid === uid);
+      const sbUser = sbUsers.find(u => u.uid === uid && u.active !== false);
       if (sbUser && enteredPin === sbUser.pin) {
-        // PIN matches Supabase — update local defaults and proceed
-        DEFAULT_USERS[uid].pin = sbUser.pin;
+        _loginUsers[uid] = { name: sbUser.name, role: sbUser.role, pin: sbUser.pin, color: sbUser.color };
         currentUser = { id: uid, name: sbUser.name, role: sbUser.role, pin: sbUser.pin, color: sbUser.color };
         document.getElementById('loginError').textContent = '';
         launchApp();
@@ -1625,13 +1598,40 @@ async function pinSubmit() {
     return;
   }
 
-  // PIN matches local — proceed with login
+  // PIN matches — proceed with login
   currentUser = { id: uid, name: localUser.name, role: localUser.role, pin: enteredPin, color: localUser.color };
   document.getElementById('loginError').textContent = '';
   launchApp();
 }
 function showLoginError(msg) { document.getElementById('loginError').textContent = msg; }
 function logout() { currentUser = null; document.getElementById('loginScreen').classList.add('active'); document.getElementById('appScreen').classList.remove('active'); document.getElementById('loginName').value=''; }
+
+// ── Login roster: fetched from Supabase before login so new hires appear instantly ──
+let _loginUsers = {};
+async function populateLoginDropdown() {
+  const sel = document.getElementById('loginName');
+  if (!sel) return;
+  let roster = {};
+  try {
+    const rows = await sbGet('ff_users');
+    rows.filter(u => u.active !== false).forEach(u => {
+      roster[u.uid] = { name: u.name, role: u.role, pin: u.pin, color: u.color };
+    });
+  } catch(e) { console.error('Login roster fetch failed, using defaults', e); }
+  if (Object.keys(roster).length === 0) roster = DEFAULT_USERS;
+  _loginUsers = roster;
+  // Sort: manager first, then leads, then staff, alphabetical within role
+  const roleOrder = { manager: 0, lead: 1, staff: 2 };
+  const ids = Object.keys(roster).sort((a,b) => {
+    const r = (roleOrder[roster[a].role] ?? 3) - (roleOrder[roster[b].role] ?? 3);
+    return r !== 0 ? r : roster[a].name.localeCompare(roster[b].name);
+  });
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Select your name…</option>' +
+    ids.map(id => `<option value="${id}">${roster[id].name}</option>`).join('');
+  if (current && roster[current]) sel.value = current;
+}
+document.addEventListener('DOMContentLoaded', populateLoginDropdown);
 
 // ══════════════════════════════════════════
 // APP LAUNCH
@@ -1658,6 +1658,7 @@ async function launchApp() {
 
   // Build nav and render
   buildNav();
+  populateEmpDropdowns();
   showPage('dashboard');
   renderDashboard();
 
@@ -1707,7 +1708,7 @@ function showPage(id) {
     pg.classList.add('active');
     if (id==='tasks') { renderTasks(); renderLowStockMyFlags(); }
     if (id==='training') renderTraining();
-    if (id==='manager') { renderManager(); initTimesheetDates(); renderTimesheet(); renderAnalytics(); renderMgrLowStock(); initTcEditDate(); renderTimeclockEditor(); }
+    if (id==='manager') { populateEmpDropdowns(); renderStaffMgmt(); renderManager(); initTimesheetDates(); renderTimesheet(); renderAnalytics(); renderMgrLowStock(); initTcEditDate(); renderTimeclockEditor(); }
     if (id==='self-review') renderSelfReview();
     if (id==='reviews') renderReviewsPage();
     if (id==='checkin') renderCheckin();
@@ -2180,6 +2181,141 @@ function closeQuiz() {
 // MANAGER DASHBOARD
 // ══════════════════════════════════════════
 let reportFilter = 'all';
+
+// ══════════════════════════════════════════
+// MANAGE STAFF (manager only)
+// ══════════════════════════════════════════
+const ROLE_COLORS = { manager:'#2D5233', lead:'#3A6B8A', staff:'#6B7C5C' };
+
+function staffMsg(text, ok) {
+  const el = document.getElementById('staff-mgmt-msg');
+  if (el) { el.textContent = text; el.style.color = ok ? '#27ae60' : '#e07060'; }
+}
+
+function renderStaffMgmt() {
+  const wrap = document.getElementById('staff-mgmt-list');
+  if (!wrap) return;
+  const all = (_cache.allUsers && Object.keys(_cache.allUsers).length > 0) ? _cache.allUsers : DEFAULT_USERS;
+  const roleOrder = { manager:0, lead:1, staff:2 };
+  const ids = Object.keys(all).sort((a,b) => {
+    const act = (all[b].active !== false) - (all[a].active !== false);
+    if (act !== 0) return act;
+    const r = (roleOrder[all[a].role] ?? 3) - (roleOrder[all[b].role] ?? 3);
+    return r !== 0 ? r : all[a].name.localeCompare(all[b].name);
+  });
+  wrap.innerHTML = ids.map(id => {
+    const u = all[id];
+    const inactive = u.active === false;
+    const isSelf = currentUser && currentUser.id === id;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);${inactive?'opacity:0.5;':''}">
+      <div style="width:30px;height:30px;border-radius:50%;background:${u.color||'#6B7C5C'};color:white;display:flex;align-items:center;justify-content:center;font-weight:500;flex-shrink:0;">${u.name[0]}</div>
+      <div style="flex:1;min-width:0;">
+        <span style="font-weight:500;">${u.name}</span>
+        <span class="badge badge-${u.role}" style="margin-left:8px;">${u.role}</span>
+        ${inactive ? '<span style="font-size:12px;color:#999;margin-left:8px;">inactive</span>' : ''}
+      </div>
+      ${isSelf ? '<span style="font-size:12px;color:#999;">you</span>' :
+        inactive
+          ? `<button class="btn btn-sm btn-outline" onclick="reactivateEmployee('${id}')">Reactivate</button>
+             <button class="btn btn-sm" style="color:#e07060;background:none;border:1px solid #e07060;" onclick="deleteEmployee('${id}')">Delete</button>`
+          : `<button class="btn btn-sm btn-outline" onclick="deactivateEmployee('${id}')">Deactivate</button>`
+      }
+    </div>`;
+  }).join('');
+}
+
+async function addEmployee() {
+  const name = (document.getElementById('new-emp-name').value || '').trim();
+  const role = document.getElementById('new-emp-role').value;
+  const pin = (document.getElementById('new-emp-pin').value || '').trim();
+  if (!name) { staffMsg('Enter a name.'); return; }
+  if (!/^\d{4}$/.test(pin)) { staffMsg('PIN must be exactly 4 digits.'); return; }
+
+  // Generate a unique uid from the name
+  let base = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!base) { staffMsg('Name must contain letters.'); return; }
+  const all = _cache.allUsers || {};
+  let uid = base, n = 2;
+  while (all[uid]) { uid = base + n; n++; }
+
+  // Block duplicate PINs among active staff (PIN is the only credential)
+  const dupPin = Object.entries(all).find(([id,u]) => u.active !== false && u.pin === pin);
+  if (dupPin) { staffMsg(`That PIN is already used by ${dupPin[1].name}. Pick a different one.`); return; }
+
+  staffMsg('Adding…', true);
+  const row = { uid, name, role, pin, color: ROLE_COLORS[role] || '#6B7C5C', active: true };
+  await sbUpsert('ff_users', row);
+
+  const rec = { name, role, pin, color: row.color, active: true };
+  if (!_cache.allUsers) _cache.allUsers = {};
+  if (!_cache.users) _cache.users = {};
+  _cache.allUsers[uid] = rec;
+  _cache.users[uid] = rec;
+
+  document.getElementById('new-emp-name').value = '';
+  document.getElementById('new-emp-pin').value = '';
+  staffMsg(`${name} added — they can now log in with PIN ${pin}.`, true);
+  renderStaffMgmt();
+  populateEmpDropdowns();
+  populateLoginDropdown();
+}
+
+async function deactivateEmployee(uid) {
+  const u = (_cache.allUsers||{})[uid];
+  if (!u) return;
+  if (!confirm(`Deactivate ${u.name}? They won't be able to log in and will disappear from schedules and training, but all their past timesheets and reports are kept.`)) return;
+  await sbUpdate('ff_users', 'uid', uid, { active: false });
+  u.active = false;
+  if (_cache.users) delete _cache.users[uid];
+  staffMsg(`${u.name} deactivated.`, true);
+  renderStaffMgmt();
+  populateEmpDropdowns();
+  populateLoginDropdown();
+}
+
+async function reactivateEmployee(uid) {
+  const u = (_cache.allUsers||{})[uid];
+  if (!u) return;
+  await sbUpdate('ff_users', 'uid', uid, { active: true });
+  u.active = true;
+  if (!_cache.users) _cache.users = {};
+  _cache.users[uid] = u;
+  staffMsg(`${u.name} reactivated.`, true);
+  renderStaffMgmt();
+  populateEmpDropdowns();
+  populateLoginDropdown();
+}
+
+async function deleteEmployee(uid) {
+  const u = (_cache.allUsers||{})[uid];
+  if (!u) return;
+  if (!confirm(`Permanently DELETE ${u.name}? Their name may show as "Unknown" on old records. Deactivating is usually better. Continue?`)) return;
+  if (!confirm(`Last check — this cannot be undone. Delete ${u.name}?`)) return;
+  await sbDelete('ff_users', 'uid', uid);
+  delete _cache.allUsers[uid];
+  if (_cache.users) delete _cache.users[uid];
+  staffMsg(`${u.name} deleted.`, true);
+  renderStaffMgmt();
+  populateEmpDropdowns();
+  populateLoginDropdown();
+}
+
+// Rebuild the manager filter dropdowns (timesheets + timeclock editor) from active roster
+function populateEmpDropdowns() {
+  const users = getUsers();
+  const ids = Object.keys(users).sort((a,b) => users[a].name.localeCompare(users[b].name));
+  const opts = ids.map(id => `<option value="${id}">${users[id].name}</option>`).join('');
+  [['ts-employee','<option value="all">All Employees</option>'],
+   ['tc-edit-emp','<option value="all">All Employees</option>'],
+   ['new-task-assignee','<option value="">👥 Everyone</option>'],
+   ['rec-assignee','<option value="">👥 Everyone</option>']].forEach(([selId, first]) => {
+    const sel = document.getElementById(selId);
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = first + opts;
+    sel.value = (current === '' || current === 'all' || users[current]) ? current : '';
+  });
+}
 
 function renderManager() {
   if (!document.getElementById('mgr-stats')) return;
