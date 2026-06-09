@@ -536,7 +536,39 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
     <div class="page active" id="page-dashboard">
       <div class="section-label">Good <span id="greeting-time"></span></div>
       <h2 style="font-family:'Playfair Display',serif;font-size:26px;font-weight:400;margin:4px 0 20px;">Welcome back, <span id="greeting-name"></span>.</h2>
+      <div id="msg-banner"></div>
       <div id="dashboard-content"></div>
+    </div>
+
+    <!-- MESSAGES -->
+    <div class="page" id="page-messages">
+      <div class="card">
+        <div class="card-title">New Message</div>
+        <div class="card-sub">Post to the whole team or send to one person. Use the phone button to log a customer call so it doesn't get lost.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+          <select class="form-select" id="msg-to" style="width:auto;">
+            <option value="">👥 Whole Team</option>
+          </select>
+          <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;">
+            <input type="checkbox" id="msg-urgent"> 🚨 Urgent (pop-up at login)
+          </label>
+          <button class="btn btn-sm btn-outline" onclick="insertPhoneTemplate()">📞 Phone Message</button>
+        </div>
+        <textarea class="form-input" id="msg-body" rows="3" placeholder="Type your message…" style="width:100%;resize:vertical;"></textarea>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;">
+          <div id="msg-send-status" style="font-size:13px;min-height:18px;"></div>
+          <button class="btn btn-primary" onclick="sendMessage()">Send Message</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Inbox</div>
+        <div class="card-sub">Messages to you and the whole team</div>
+        <div id="msg-inbox"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Sent</div>
+        <div id="msg-sent"></div>
+      </div>
     </div>
 
     <!-- TASKS -->
@@ -1089,6 +1121,15 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
 
 
 <!-- SHIFT EDITOR MODAL -->
+<!-- URGENT MESSAGE POPUP -->
+<div class="modal-overlay" id="urgentMsgModal" style="z-index:300;">
+  <div class="modal-box">
+    <div class="modal-title">🚨 Urgent Messages</div>
+    <div id="urgent-msg-list" style="max-height:50vh;overflow-y:auto;"></div>
+    <button class="btn btn-primary" style="width:100%;margin-top:14px;" onclick="dismissUrgentMessages()">Got it</button>
+  </div>
+</div>
+
 <div class="modal-overlay" id="shiftModal">
   <div class="modal-box">
     <div class="modal-title" id="shift-modal-title">Add Shift</div>
@@ -1312,7 +1353,7 @@ async function loadAllData(uid) {
   showAppLoading(true);
   try {
     const today = todayKey();
-    const [users, tasks, recurring, reports, timeEntries, schedule, timeoffs, lowStock, feedback, deliveries, training, deliveryInvoices, selfReviews] = await Promise.all([
+    const [users, tasks, recurring, reports, timeEntries, schedule, timeoffs, lowStock, feedback, deliveries, training, deliveryInvoices, selfReviews, messages] = await Promise.all([
       sbGet('ff_users'),
       sbGet('ff_tasks'),
       sbGet('ff_recurring'),
@@ -1325,7 +1366,8 @@ async function loadAllData(uid) {
       sbGet('ff_deliveries'),
       sbGet('ff_training'),
       sbGet('ff_delivery_invoices'),
-      sbGet('ff_self_reviews')
+      sbGet('ff_self_reviews'),
+      sbGet('ff_messages')
     ]);
 
     // Map Supabase rows to app format
@@ -1337,6 +1379,8 @@ async function loadAllData(uid) {
       _cache.allUsers[u.uid] = rec;
       if (u.active !== false) _cache.users[u.uid] = rec;
     });
+
+    _cache.messages = (messages || []).map(m => ({ id:m.msg_id, fromUid:m.from_uid, fromName:m.from_name, toUid:m.to_uid||'', body:m.body, urgent:!!m.urgent, readBy:m.read_by||[], archived:!!m.archived, createdAt:m.created_at }));
 
     _cache.tasks = tasks.map(t => ({ id:t.task_id, text:t.task_text, priority:t.priority, assignee:t.assignee||'', done:t.done, date:t.date, recId:t.rec_id||'', addedBy:t.added_by, addedAt:t.added_at, doneBy:t.done_by, doneAt:t.done_at }));
 
@@ -1662,6 +1706,11 @@ async function launchApp() {
   showPage('dashboard');
   renderDashboard();
 
+  // Messages: unread badge, dashboard banner, urgent pop-up
+  updateMsgBadge();
+  updateMsgBanner();
+  checkUrgentMessages();
+
   // Check weekly summary after a short delay
   setTimeout(checkShowWeeklySummary, 1200);
   checkAnthropicKey();
@@ -1674,6 +1723,7 @@ function buildNav() {
   nav.innerHTML = '';
   const pages = [
     { id:'dashboard', label:'Dashboard' },
+    { id:'messages', label:'Messages' },
     { id:'tasks', label:'Task Board' },
     { id:'checkin', label:'Check-In' },
     { id:'checkout', label:'End of Shift' },
@@ -1694,6 +1744,7 @@ function buildNav() {
   pages.forEach(p => {
     const btn = document.createElement('button');
     btn.className = 'nav-item';
+    btn.dataset.page = p.id;
     btn.textContent = p.label;
     btn.onclick = () => { showPage(p.id); document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); };
     nav.appendChild(btn);
@@ -1707,6 +1758,7 @@ function showPage(id) {
   if (pg) {
     pg.classList.add('active');
     if (id==='tasks') { renderTasks(); renderLowStockMyFlags(); }
+    if (id==='messages') { renderMessages(); markMessagesRead(); }
     if (id==='training') renderTraining();
     if (id==='manager') { populateEmpDropdowns(); renderStaffMgmt(); renderManager(); initTimesheetDates(); renderTimesheet(); renderAnalytics(); renderMgrLowStock(); initTcEditDate(); renderTimeclockEditor(); }
     if (id==='self-review') renderSelfReview();
@@ -1737,6 +1789,7 @@ function renderDashboard() {
   const hr = new Date().getHours();
   document.getElementById('greeting-time').textContent = hr < 12 ? 'morning' : hr < 17 ? 'afternoon' : 'evening';
   document.getElementById('greeting-name').textContent = currentUser.name;
+  updateMsgBanner();
 
   const today = todayKey();
   let tasks = (_cache.tasks || []).filter(t => t.date === today);
@@ -2315,6 +2368,204 @@ function populateEmpDropdowns() {
     sel.innerHTML = first + opts;
     sel.value = (current === '' || current === 'all' || users[current]) ? current : '';
   });
+}
+
+// ══════════════════════════════════════════
+// MESSAGES (team board + direct messages)
+// ══════════════════════════════════════════
+function timeAgoMsg(iso) {
+  if (!iso) return '';
+  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  const hrs = Math.floor(mins/60);
+  if (hrs < 24) return hrs + 'h ago';
+  const days = Math.floor(hrs/24);
+  if (days < 7) return days + 'd ago';
+  return new Date(iso).toLocaleDateString('en-US', {month:'short', day:'numeric'});
+}
+
+// Messages I can see: not archived, and addressed to everyone, to me, or sent by me
+function visibleMessages() {
+  return (_cache.messages || []).filter(m =>
+    !m.archived && (m.toUid === '' || m.toUid === currentUser.id || m.fromUid === currentUser.id)
+  ).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
+// Unread = visible, not sent by me, and I haven't read it
+function unreadMessages() {
+  return visibleMessages().filter(m => m.fromUid !== currentUser.id && !(m.readBy||[]).includes(currentUser.id));
+}
+
+function updateMsgBadge() {
+  const btn = document.querySelector('.nav-item[data-page="messages"]');
+  if (!btn) return;
+  const n = unreadMessages().length;
+  btn.innerHTML = n > 0
+    ? `Messages <span style="background:#e07060;color:white;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:500;margin-left:4px;">${n}</span>`
+    : 'Messages';
+}
+
+function updateMsgBanner() {
+  const el = document.getElementById('msg-banner');
+  if (!el) return;
+  const unread = unreadMessages();
+  if (unread.length === 0) { el.innerHTML = ''; return; }
+  const urgentCount = unread.filter(m => m.urgent).length;
+  el.innerHTML = `
+    <div style="background:${urgentCount>0?'#fdecea':'#fef8ec'};border:1px solid ${urgentCount>0?'#e07060':'#C49A3C'};border-radius:12px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;" onclick="goToMessages()">
+      <div style="font-size:14px;">📬 <strong>${unread.length}</strong> new message${unread.length===1?'':'s'}${urgentCount>0?` — <span style="color:#c0392b;font-weight:500;">${urgentCount} urgent</span>`:''}</div>
+      <button class="btn btn-sm btn-outline" onclick="event.stopPropagation();goToMessages()">View →</button>
+    </div>`;
+}
+
+function goToMessages() {
+  showPage('messages');
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === 'messages'));
+}
+
+function renderMessages() {
+  // Recipient dropdown: whole team + each active person except me
+  const sel = document.getElementById('msg-to');
+  if (sel) {
+    const users = getUsers();
+    const ids = Object.keys(users).filter(id => id !== currentUser.id).sort((a,b) => users[a].name.localeCompare(users[b].name));
+    const current = sel.value;
+    sel.innerHTML = '<option value="">👥 Whole Team</option>' +
+      ids.map(id => `<option value="${id}">${users[id].name}</option>`).join('');
+    if (current && (current === '' || users[current])) sel.value = current;
+  }
+
+  const msgs = visibleMessages();
+  const inbox = msgs.filter(m => m.fromUid !== currentUser.id).slice(0, 50);
+  const sent = msgs.filter(m => m.fromUid === currentUser.id).slice(0, 30);
+  const canArchive = m => m.fromUid === currentUser.id || m.toUid === currentUser.id || currentUser.role === 'manager';
+
+  const inboxEl = document.getElementById('msg-inbox');
+  if (inboxEl) {
+    inboxEl.innerHTML = inbox.length === 0 ? '<div style="color:#999;font-size:14px;padding:8px 0;">No messages yet.</div>' :
+      inbox.map(m => {
+        const unread = !(m.readBy||[]).includes(currentUser.id);
+        const sender = getUser(m.fromUid);
+        return `<div style="padding:11px 12px;border-radius:10px;margin-bottom:8px;background:${m.urgent?'#fdecea':unread?'#fef8ec':'#fafaf8'};border:1px solid ${m.urgent?'#e07060':'var(--border)'};">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+            <div style="width:24px;height:24px;border-radius:50%;background:${sender?.color||'#6B7C5C'};color:white;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500;flex-shrink:0;">${m.fromName[0]}</div>
+            <span style="font-weight:500;font-size:14px;">${m.fromName}</span>
+            ${m.urgent ? '<span style="font-size:11px;background:#e07060;color:white;border-radius:8px;padding:1px 7px;">URGENT</span>' : ''}
+            ${m.toUid === '' ? '<span style="font-size:11px;color:#999;">to everyone</span>' : '<span style="font-size:11px;color:#999;">to you</span>'}
+            ${unread ? '<span style="width:8px;height:8px;border-radius:50%;background:#C49A3C;display:inline-block;"></span>' : ''}
+            <span style="font-size:12px;color:#aaa;margin-left:auto;">${timeAgoMsg(m.createdAt)}</span>
+          </div>
+          <div style="font-size:14px;white-space:pre-wrap;word-break:break-word;">${escapeMsgHtml(m.body)}</div>
+          ${canArchive(m) ? `<div style="text-align:right;margin-top:4px;"><button class="btn btn-sm" style="background:none;border:none;color:#bbb;cursor:pointer;font-size:12px;" onclick="archiveMessage('${m.id}')">✓ Done / Archive</button></div>` : ''}
+        </div>`;
+      }).join('');
+  }
+
+  const sentEl = document.getElementById('msg-sent');
+  if (sentEl) {
+    sentEl.innerHTML = sent.length === 0 ? '<div style="color:#999;font-size:14px;padding:8px 0;">Nothing sent yet.</div>' :
+      sent.map(m => {
+        const readers = (m.readBy||[]).filter(id => id !== currentUser.id).map(id => getUser(id)?.name || id);
+        const toName = m.toUid === '' ? 'Everyone' : (getUser(m.toUid)?.name || m.toUid);
+        return `<div style="padding:10px 12px;border-radius:10px;margin-bottom:8px;background:#fafaf8;border:1px solid var(--border);">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:13px;color:#888;">
+            To: <strong style="color:#555;">${toName}</strong>
+            ${m.urgent ? '<span style="font-size:11px;background:#e07060;color:white;border-radius:8px;padding:1px 7px;">URGENT</span>' : ''}
+            <span style="margin-left:auto;color:#aaa;font-size:12px;">${timeAgoMsg(m.createdAt)}</span>
+          </div>
+          <div style="font-size:14px;white-space:pre-wrap;word-break:break-word;">${escapeMsgHtml(m.body)}</div>
+          <div style="font-size:12px;color:${readers.length?'#27ae60':'#bbb'};margin-top:5px;">${readers.length ? '✓ Seen by ' + readers.join(', ') : 'Not seen yet'}</div>
+          <div style="text-align:right;"><button class="btn btn-sm" style="background:none;border:none;color:#bbb;cursor:pointer;font-size:12px;" onclick="archiveMessage('${m.id}')">Archive</button></div>
+        </div>`;
+      }).join('');
+  }
+  updateMsgBadge();
+  updateMsgBanner();
+}
+
+function escapeMsgHtml(s) {
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function sendMessage() {
+  const body = (document.getElementById('msg-body').value || '').trim();
+  const toUid = document.getElementById('msg-to').value;
+  const urgent = document.getElementById('msg-urgent').checked;
+  const status = document.getElementById('msg-send-status');
+  if (!body) { status.textContent = 'Type a message first.'; status.style.color = '#e07060'; return; }
+
+  const msg = {
+    msg_id: Date.now() + '_' + currentUser.id,
+    from_uid: currentUser.id, from_name: currentUser.name,
+    to_uid: toUid, body, urgent,
+    read_by: [], archived: false,
+    created_at: new Date().toISOString()
+  };
+  status.textContent = 'Sending…'; status.style.color = '#888';
+  await sbUpsert('ff_messages', msg);
+  if (!_cache.messages) _cache.messages = [];
+  _cache.messages.push({ id:msg.msg_id, fromUid:msg.from_uid, fromName:msg.from_name, toUid:msg.to_uid, body:msg.body, urgent:msg.urgent, readBy:[], archived:false, createdAt:msg.created_at });
+
+  document.getElementById('msg-body').value = '';
+  document.getElementById('msg-urgent').checked = false;
+  status.textContent = 'Sent ✓'; status.style.color = '#27ae60';
+  setTimeout(() => { if (status.textContent === 'Sent ✓') status.textContent = ''; }, 3000);
+  renderMessages();
+}
+
+function insertPhoneTemplate() {
+  const body = document.getElementById('msg-body');
+  body.value = '📞 Phone message\nCaller: \nNumber: \nRegarding: \nNeeds call back: yes / no';
+  // Default phone messages to the manager
+  const users = getUsers();
+  const mgrId = Object.keys(users).find(id => users[id].role === 'manager' && id !== currentUser.id);
+  if (mgrId) document.getElementById('msg-to').value = mgrId;
+  body.focus();
+}
+
+// Mark all my visible unread messages as read (called when Messages page opens)
+async function markMessagesRead() {
+  const unread = unreadMessages();
+  for (const m of unread) {
+    m.readBy = [...(m.readBy||[]), currentUser.id];
+    await sbUpdate('ff_messages', 'msg_id', m.id, { read_by: m.readBy });
+  }
+  updateMsgBadge();
+  updateMsgBanner();
+  if (unread.length > 0) renderMessages();
+}
+
+async function archiveMessage(msgId) {
+  const m = (_cache.messages||[]).find(x => x.id === msgId);
+  if (!m) return;
+  await sbUpdate('ff_messages', 'msg_id', msgId, { archived: true });
+  m.archived = true;
+  renderMessages();
+}
+
+// Urgent pop-up at login: unread urgent messages must be dismissed
+function checkUrgentMessages() {
+  const urgent = unreadMessages().filter(m => m.urgent);
+  if (urgent.length === 0) return;
+  const list = document.getElementById('urgent-msg-list');
+  list.innerHTML = urgent.map(m => `
+    <div style="padding:10px 12px;border-radius:10px;margin-bottom:8px;background:#fdecea;border:1px solid #e07060;">
+      <div style="font-size:13px;font-weight:500;margin-bottom:4px;">${m.fromName} · ${timeAgoMsg(m.createdAt)}</div>
+      <div style="font-size:14px;white-space:pre-wrap;word-break:break-word;">${escapeMsgHtml(m.body)}</div>
+    </div>`).join('');
+  document.getElementById('urgentMsgModal').classList.add('active');
+}
+
+async function dismissUrgentMessages() {
+  document.getElementById('urgentMsgModal').classList.remove('active');
+  const urgent = unreadMessages().filter(m => m.urgent);
+  for (const m of urgent) {
+    m.readBy = [...(m.readBy||[]), currentUser.id];
+    await sbUpdate('ff_messages', 'msg_id', m.id, { read_by: m.readBy });
+  }
+  updateMsgBadge();
+  updateMsgBanner();
 }
 
 function renderManager() {
