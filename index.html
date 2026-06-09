@@ -273,30 +273,6 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
   .status-approved { background:#e8f5e9; color:#2e7d32; }
   .status-denied { background:#fde8e4; color:#c62828; }
 
-  /* time off calendar (manager view) */
-  .tocal-nav { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
-  .tocal-month { font-family:'Playfair Display',serif; font-size:17px; color:var(--dark); }
-  .tocal-arrow { background:var(--light); border:1px solid var(--border); border-radius:8px; width:34px; height:34px; cursor:pointer; font-size:15px; color:var(--dark); font-family:'DM Sans',sans-serif; }
-  .tocal-arrow:hover { background:var(--border); }
-  .tocal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
-  .tocal-dow { text-align:center; font-size:11px; font-weight:600; color:#999; text-transform:uppercase; letter-spacing:0.5px; padding:4px 0; }
-  .tocal-day { background:white; border:1px solid var(--border); border-radius:8px; min-height:74px; padding:4px; position:relative; display:flex; flex-direction:column; gap:2px; }
-  .tocal-day.tocal-empty { background:transparent; border:none; }
-  .tocal-day.tocal-today { border:2px solid var(--gold); }
-  .tocal-day.tocal-conflict { background:#fdf1ec; border:2px solid var(--rust); }
-  .tocal-daynum { font-size:11px; font-weight:600; color:#888; padding-left:2px; }
-  .tocal-today .tocal-daynum { color:var(--gold); }
-  .tocal-conflict-badge { position:absolute; top:3px; right:3px; background:var(--rust); color:white; font-size:9px; font-weight:600; padding:1px 5px; border-radius:8px; }
-  .tocal-chip { font-size:10px; line-height:1.3; padding:1px 5px; border-radius:5px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .tocal-chip.approved { background:#e8f5e9; color:#2e7d32; border-left:3px solid #2e7d32; }
-  .tocal-chip.pending { background:#fff3e0; color:#e65100; border-left:3px dashed #e65100; }
-  .tocal-legend { display:flex; flex-wrap:wrap; gap:14px; margin-top:12px; font-size:12px; color:#666; align-items:center; }
-  .tocal-legend-swatch { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
-  @media (max-width:600px) {
-    .tocal-day { min-height:58px; padding:3px 2px; }
-    .tocal-chip { font-size:9px; padding:1px 3px; }
-  }
-
   /* AI schedule assistant */
   .sched-assistant { background:var(--dark); border-radius:14px; padding:24px; margin-bottom:16px; }
   .sched-assistant-title { font-family:'Playfair Display',serif; color:var(--gold); font-size:18px; margin-bottom:6px; }
@@ -837,22 +813,6 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
 
     <!-- TIME OFF -->
     <div class="page" id="page-timeoff">
-      <div class="card" id="timeoff-calendar-card" style="display:none;">
-        <div class="card-title">Time Off Calendar</div>
-        <div class="card-sub">Visual overview for scheduling — days with multiple people out are flagged</div>
-        <div class="tocal-nav">
-          <button class="tocal-arrow" onclick="changeToCalMonth(-1)">‹</button>
-          <div class="tocal-month" id="tocal-month-label"></div>
-          <button class="tocal-arrow" onclick="changeToCalMonth(1)">›</button>
-        </div>
-        <div class="tocal-grid" id="tocal-grid"></div>
-        <div class="tocal-legend">
-          <span><span class="tocal-legend-swatch" style="background:#e8f5e9;border-left:3px solid #2e7d32;"></span>Approved</span>
-          <span><span class="tocal-legend-swatch" style="background:#fff3e0;border-left:3px dashed #e65100;"></span>Pending</span>
-          <span><span class="tocal-legend-swatch" style="background:#fdf1ec;border:2px solid var(--rust);"></span>Multiple people off</span>
-          <span><span class="tocal-legend-swatch" style="background:white;border:2px solid var(--gold);"></span>Today</span>
-        </div>
-      </div>
       <div class="card" id="timeoff-request-card">
         <div class="card-title">Request Time Off</div>
         <div class="card-sub">Submit a request and Jeff will approve or deny it</div>
@@ -923,6 +883,10 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
         <div id="feedback-list"></div>
       </div>
     </div>
+
+
+    <!-- SPECIAL ORDERS -->
+    <div class="page" id="page-special-orders"></div>
 
 
     <!-- DELIVERY LOG -->
@@ -1393,7 +1357,7 @@ async function loadAllData(uid) {
   showAppLoading(true);
   try {
     const today = todayKey();
-    const [users, tasks, recurring, reports, timeEntries, schedule, timeoffs, lowStock, feedback, deliveries, training, deliveryInvoices, selfReviews, messages] = await Promise.all([
+    const [users, tasks, recurring, reports, timeEntries, schedule, timeoffs, lowStock, feedback, deliveries, training, deliveryInvoices, selfReviews, messages, specialOrders, soSettings] = await Promise.all([
       sbGet('ff_users'),
       sbGet('ff_tasks'),
       sbGet('ff_recurring'),
@@ -1407,7 +1371,9 @@ async function loadAllData(uid) {
       sbGet('ff_training'),
       sbGet('ff_delivery_invoices'),
       sbGet('ff_self_reviews'),
-      sbGet('ff_messages')
+      sbGet('ff_messages'),
+      sbGet('ff_special_orders'),
+      sbGet('ff_so_settings')
     ]);
 
     // Map Supabase rows to app format
@@ -1478,6 +1444,19 @@ async function loadAllData(uid) {
       parsedAt: r.parsed_at,
       rawFilename: r.raw_filename
     }));
+
+    // Special orders
+    _cache.specialOrders = (specialOrders || []).map(o => ({
+      id: o.so_id, customerName: o.customer_name, phone: o.customer_phone || '', email: o.customer_email || '',
+      product: o.product, qty: o.qty || 1, vendor: o.vendor || '', notes: o.notes || '',
+      depositTaken: !!o.deposit_taken, depositAmount: o.deposit_amount || 0,
+      status: o.status || 'pending', deadline: o.deadline_date || null,
+      orderedAt: o.ordered_at, arrivedAt: o.arrived_at, pickedUpAt: o.picked_up_at, cancelledAt: o.cancelled_at,
+      contactLog: o.contact_log || [], needsReminder: !!o.needs_reminder,
+      loggedBy: o.logged_by, uid: o.uid, date: o.date, createdAt: o.created_at
+    }));
+    _cache.soSettings = {};
+    (soSettings || []).forEach(r => { _cache.soSettings[r.setting_key] = r.value; });
 
   } catch(e) {
     console.error('Load error:', e);
@@ -1561,6 +1540,23 @@ async function saveFeedback(f) {
     resolution: f.resolution||null, logged_by: f.loggedBy,
     uid: f.uid, date: f.date
   });
+}
+
+async function saveSpecialOrder(o) {
+  await sbUpsert('ff_special_orders', {
+    so_id: o.id, customer_name: o.customerName, customer_phone: o.phone || null, customer_email: o.email || null,
+    product: o.product, qty: o.qty || 1, vendor: o.vendor || null, notes: o.notes || null,
+    deposit_taken: !!o.depositTaken, deposit_amount: o.depositAmount || null,
+    status: o.status, deadline_date: o.deadline || null,
+    ordered_at: o.orderedAt || null, arrived_at: o.arrivedAt || null,
+    picked_up_at: o.pickedUpAt || null, cancelled_at: o.cancelledAt || null,
+    contact_log: o.contactLog || [], needs_reminder: !!o.needsReminder,
+    logged_by: o.loggedBy, uid: o.uid, date: o.date
+  });
+}
+
+async function saveSoSettings(key, value) {
+  await sbUpsert('ff_so_settings', { setting_key: key, value });
 }
 
 async function saveDelivery(d) {
@@ -1750,6 +1746,7 @@ async function launchApp() {
   updateMsgBadge();
   updateMsgBanner();
   checkUrgentMessages();
+  updateSoBadge();
 
   // Background refresh every 60s so new messages appear while logged in
   if (!window._msgPoll) {
@@ -1793,6 +1790,7 @@ function buildNav() {
   if (currentUser.role === 'manager' || currentUser.role === 'lead') pages.push({ id:'recurring', label:'Recurring Tasks' });
   if (currentUser.role === 'manager' || currentUser.role === 'lead') pages.push({ id:'availability', label:'Availability' });
   pages.push({ id:'feedback', label:'Customer Log' });
+  pages.push({ id:'special-orders', label:'Special Orders' });
   pages.push({ id:'checkin-delivery', label:'📦 Receive Delivery' });
   pages.push({ id:'schedule', label:'Schedule' });
   pages.push({ id:'timeoff', label:'Time Off' });
@@ -1825,6 +1823,7 @@ function showPage(id) {
     if (id==='schedule') renderSchedule();
     if (id==='availability') renderAvailabilityEditor();
     if (id==='feedback') renderFeedback();
+    if (id==='special-orders') renderSpecialOrders();
     if (id==='delivery') renderDeliveryLog();
     if (id==='checkin-delivery') {
       // Kill the inactivity timer immediately — no timeout on this page
@@ -6062,11 +6061,6 @@ function renderTimeoff() {
   const isManager = currentUser.role === 'manager';
   const isMgr = currentUser.role === 'manager' || currentUser.role === 'lead';
 
-  // Manager-only calendar view
-  const calCard = document.getElementById('timeoff-calendar-card');
-  calCard.style.display = isManager ? 'block' : 'none';
-  if (isManager) renderTimeoffCalendar();
-
   // Show/hide request card for staff & leads
   const reqCard = document.getElementById('timeoff-request-card');
   reqCard.style.display = currentUser.role === 'manager' ? 'none' : 'block';
@@ -6094,64 +6088,6 @@ function renderTimeoff() {
       ${approveButtons}
     </div>`;
   }).join('');
-}
-
-// ── TIME OFF CALENDAR (manager view) ──
-let _toCalDate = null; // first day of the displayed month
-
-function changeToCalMonth(delta) {
-  if (!_toCalDate) _toCalDate = new Date();
-  _toCalDate = new Date(_toCalDate.getFullYear(), _toCalDate.getMonth() + delta, 1);
-  renderTimeoffCalendar();
-}
-
-function renderTimeoffCalendar() {
-  if (!_toCalDate) { const now = new Date(); _toCalDate = new Date(now.getFullYear(), now.getMonth(), 1); }
-  const year = _toCalDate.getFullYear();
-  const month = _toCalDate.getMonth();
-
-  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  document.getElementById('tocal-month-label').textContent = `${monthNames[month]} ${year}`;
-
-  const firstDow = new Date(year, month, 1).getDay(); // 0 = Sunday
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-
-  const pad = n => String(n).padStart(2, '0');
-  const todayStr = (() => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; })();
-
-  // Only pending + approved show on the calendar
-  const reqs = (_cache.timeoffs || []).filter(r => r.status === 'pending' || r.status === 'approved');
-
-  let html = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => `<div class="tocal-dow">${d}</div>`).join('');
-
-  for (let i = 0; i < firstDow; i++) html += '<div class="tocal-day tocal-empty"></div>';
-
-  for (let day = 1; day <= daysInMonth; day++) {
-    const dStr = `${year}-${pad(month+1)}-${pad(day)}`;
-    const dayReqs = reqs.filter(r => dStr >= r.start && dStr <= r.end);
-
-    // Conflict = 2+ distinct people requested (pending or approved) the same day
-    const distinctPeople = [...new Set(dayReqs.map(r => r.uid))];
-    const isConflict = distinctPeople.length >= 2;
-    const isToday = dStr === todayStr;
-
-    const chips = dayReqs.map(r => {
-      const firstName = (r.name || '').split(' ')[0];
-      return `<div class="tocal-chip ${r.status}" title="${r.name} · ${r.status}${r.reason ? ' · ' + r.reason : ''}">${firstName}</div>`;
-    }).join('');
-
-    const classes = ['tocal-day'];
-    if (isConflict) classes.push('tocal-conflict');
-    if (isToday) classes.push('tocal-today');
-
-    html += `<div class="${classes.join(' ')}">
-      ${isConflict ? `<div class="tocal-conflict-badge">${distinctPeople.length} off</div>` : ''}
-      <div class="tocal-daynum">${day}</div>
-      ${chips}
-    </div>`;
-  }
-
-  document.getElementById('tocal-grid').innerHTML = html;
 }
 
 // ══════════════════════════════════════════
@@ -6233,6 +6169,8 @@ function renderDeliveryCheckin() {
         ⚠ <strong>${inv.priceChanges.length} price change${inv.priceChanges.length > 1 ? 's' : ''} detected</strong> — check before shelving:
         ${inv.priceChanges.map(p => `<span style="display:inline-block;margin:2px 4px;background:#fff;border:1px solid #f0c040;border-radius:4px;padding:2px 7px;">${p.description} $${p.previous}→$${p.current}</span>`).join('')}
       </div>` : ''}
+
+      ${soMatchBannerHTML(inv)}
 
       <div style="margin-bottom:16px;">
         ${items.map((item, i) => {
@@ -6363,6 +6301,444 @@ async function refreshDeliveryInvoices() {
 }
 
 // ══════════════════════════════════════════
+
+// ══════════════════════════════════════════
+// SPECIAL ORDERS
+// ══════════════════════════════════════════
+const SO_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const SO_DEFAULT_VENDORS = [
+  { name:'Newco', day:3, cutoff:'' },
+  { name:'VSI', day:2, cutoff:'by 2pm' },
+  { name:'Phillips', day:4, cutoff:'by 10am' },
+  { name:'Bar ALE', day:null, cutoff:'' },
+  { name:'Elk Grove Milling', day:null, cutoff:'' },
+  { name:'Volkman Pet', day:null, cutoff:'' },
+  { name:'Associated Feed', day:null, cutoff:'' },
+  { name:'Farmers Feed', day:null, cutoff:'' },
+];
+let soTab = 'pending';
+let soExpanded = {};
+
+function soEsc(s) { return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+function soVendors() {
+  const saved = (_cache.soSettings || {})['vendors'];
+  if (Array.isArray(saved) && saved.length) {
+    return SO_DEFAULT_VENDORS.map(d => {
+      const s = saved.find(v => v.name === d.name);
+      if (!s) return d;
+      const day = (s.day === '' || s.day === null || s.day === undefined) ? null : Number(s.day);
+      return { name: d.name, day, cutoff: s.cutoff || '' };
+    });
+  }
+  return SO_DEFAULT_VENDORS;
+}
+
+function soVendorCfg(name) { return soVendors().find(v => v.name === name) || null; }
+
+function soNextDeadline(day) {
+  if (day === null || day === undefined || day === '') return null;
+  const d = new Date();
+  const diff = (Number(day) - d.getDay() + 7) % 7;
+  return dateKey(new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff));
+}
+
+function soFmtDate(key) {
+  if (!key) return '';
+  const [y,m,d] = key.split('-').map(Number);
+  const dt = new Date(y, m-1, d);
+  return dt.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
+}
+
+function soDueToday() {
+  const today = todayKey();
+  return (_cache.specialOrders || []).filter(o => o.status === 'pending' && o.deadline === today);
+}
+
+function soReminderCount() {
+  return (_cache.specialOrders || []).filter(o => o.status === 'arrived' && o.needsReminder).length;
+}
+
+function updateSoBadge() {
+  const btn = document.querySelector('.nav-item[data-page="special-orders"]');
+  if (!btn) return;
+  const n = soDueToday().length + soReminderCount();
+  btn.innerHTML = n > 0
+    ? `Special Orders <span style="background:#d4853a;color:white;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:500;margin-left:4px;">${n}</span>`
+    : 'Special Orders';
+}
+
+// ── New order form handlers ──
+function soVendorChanged() {
+  const sel = document.getElementById('so-vendor');
+  const otherWrap = document.getElementById('so-vendor-other-wrap');
+  const hint = document.getElementById('so-deadline-hint');
+  if (!sel) return;
+  if (otherWrap) otherWrap.style.display = sel.value === '__other__' ? 'block' : 'none';
+  if (hint) {
+    const cfg = soVendorCfg(sel.value);
+    if (cfg && cfg.day !== null) {
+      hint.textContent = `Order deadline: ${SO_DAYS[cfg.day]}${cfg.cutoff ? ' ' + cfg.cutoff : ''} — next due ${soFmtDate(soNextDeadline(cfg.day))}`;
+    } else if (sel.value && sel.value !== '__other__') {
+      hint.textContent = 'No order deadline set for this vendor yet — a manager can add one in Vendor Deadlines below.';
+    } else {
+      hint.textContent = '';
+    }
+  }
+}
+
+async function submitSpecialOrder() {
+  const name = document.getElementById('so-customer').value.trim();
+  const phone = document.getElementById('so-phone').value.trim();
+  const email = document.getElementById('so-email').value.trim();
+  const product = document.getElementById('so-product').value.trim();
+  const qty = parseInt(document.getElementById('so-qty').value) || 1;
+  const vendorSel = document.getElementById('so-vendor').value;
+  const vendorOther = document.getElementById('so-vendor-other').value.trim();
+  const notes = document.getElementById('so-notes').value.trim();
+  const depositTaken = document.getElementById('so-deposit-taken').checked;
+  const depositAmount = parseFloat(document.getElementById('so-deposit-amount').value) || 0;
+
+  if (!name) { alert('Please enter the customer name.'); return; }
+  if (!phone) { alert('Please enter a phone number so we can call when it arrives.'); return; }
+  if (!product) { alert('Please enter the product they want.'); return; }
+  if (!vendorSel) { alert('Please pick a vendor (or choose Other).'); return; }
+  if (vendorSel === '__other__' && !vendorOther) { alert('Please type the vendor name.'); return; }
+
+  const vendor = vendorSel === '__other__' ? vendorOther : vendorSel;
+  const cfg = soVendorCfg(vendor);
+  const deadline = cfg && cfg.day !== null ? soNextDeadline(cfg.day) : null;
+
+  const o = {
+    id: 'so' + Date.now(),
+    customerName: name, phone, email, product, qty, vendor, notes,
+    depositTaken, depositAmount: depositTaken ? depositAmount : 0,
+    status: 'pending', deadline,
+    orderedAt: null, arrivedAt: null, pickedUpAt: null, cancelledAt: null,
+    contactLog: [], needsReminder: false,
+    loggedBy: currentUser.name, uid: currentUser.id, date: todayKey(),
+    createdAt: new Date().toISOString()
+  };
+  if (!_cache.specialOrders) _cache.specialOrders = [];
+  _cache.specialOrders.push(o);
+  await saveSpecialOrder(o);
+
+  ['so-customer','so-phone','so-email','so-product','so-notes','so-vendor-other','so-deposit-amount'].forEach(id => { const el = document.getElementById(id); if (el) el.value=''; });
+  document.getElementById('so-qty').value = '1';
+  document.getElementById('so-vendor').value = '';
+  document.getElementById('so-deposit-taken').checked = false;
+  soVendorChanged();
+  soTab = 'pending';
+  renderSpecialOrders();
+  updateSoBadge();
+  alert(deadline
+    ? `Special order logged for ${name}. Next ${vendor} order deadline: ${soFmtDate(deadline)}.`
+    : `Special order logged for ${name}.`);
+}
+
+// ── Status transitions ──
+function soFind(id) { return (_cache.specialOrders || []).find(o => o.id === id); }
+
+async function soMarkOrdered(id) {
+  const o = soFind(id); if (!o) return;
+  o.status = 'ordered'; o.orderedAt = new Date().toISOString();
+  await saveSpecialOrder(o);
+  renderSpecialOrders(); updateSoBadge();
+}
+
+async function soMarkArrived(id, fromDelivery) {
+  const o = soFind(id); if (!o) return;
+  o.status = 'arrived'; o.arrivedAt = new Date().toISOString();
+  await saveSpecialOrder(o);
+  updateSoBadge();
+  if (fromDelivery) {
+    renderDeliveryCheckin();
+    alert(`Marked arrived: ${o.product} for ${o.customerName}. Don't forget to call — it's in the Arrived tab of Special Orders.`);
+  } else {
+    renderSpecialOrders();
+  }
+}
+
+async function soMarkPickedUp(id) {
+  const o = soFind(id); if (!o) return;
+  o.status = 'picked_up'; o.pickedUpAt = new Date().toISOString(); o.needsReminder = false;
+  await saveSpecialOrder(o);
+  renderSpecialOrders(); updateSoBadge();
+}
+
+async function soCancel(id) {
+  const o = soFind(id); if (!o) return;
+  if (!confirm(`Cancel the special order of "${o.product}" for ${o.customerName}?${o.depositTaken ? ' Remember they left a deposit — it will need to be refunded.' : ''}`)) return;
+  o.status = 'cancelled'; o.cancelledAt = new Date().toISOString(); o.needsReminder = false;
+  await saveSpecialOrder(o);
+  renderSpecialOrders(); updateSoBadge();
+}
+
+// ── Contact log ──
+function soToggleContact(id) {
+  soExpanded[id] = !soExpanded[id];
+  renderSpecialOrders();
+}
+
+async function soLogContact(id) {
+  const o = soFind(id); if (!o) return;
+  const method = document.getElementById('so-cm-' + id).value;
+  const outcome = document.getElementById('so-co-' + id).value;
+  const pickupDate = document.getElementById('so-cp-' + id).value;
+  const note = document.getElementById('so-cn-' + id).value.trim();
+  if (!method || !outcome) { alert('Pick how you contacted them and what happened.'); return; }
+  if (!o.contactLog) o.contactLog = [];
+  o.contactLog.push({ method, outcome, pickupDate: pickupDate || null, note, by: currentUser.name, at: new Date().toISOString() });
+  o.needsReminder = ['voicemail','text','no_answer'].includes(outcome);
+  await saveSpecialOrder(o);
+  soExpanded[id] = false;
+  renderSpecialOrders(); updateSoBadge();
+}
+
+const SO_METHODS = { phone:'📞 Phone', text:'💬 Text', email:'✉️ Email', in_person:'🛍 In person' };
+const SO_OUTCOMES = { spoke:'Spoke to customer', voicemail:'Left voicemail', text:'Text sent', no_answer:'No answer', email_sent:'Email sent' };
+
+// ── Auto-match against delivery invoices ──
+function soNormTokens(s) {
+  const stop = ['the','and','for','with','from','lbs','bag','case','each'];
+  return (s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(w => w.length >= 3 && !stop.includes(w));
+}
+
+function soMatchesForInvoice(inv) {
+  const orders = (_cache.specialOrders || []).filter(o => (o.status === 'pending' || o.status === 'ordered') && o.vendor === inv.vendor);
+  const out = [];
+  orders.forEach(o => {
+    const toks = soNormTokens(o.product);
+    if (!toks.length) return;
+    let best = null, bestScore = 0;
+    (inv.items || []).forEach(it => {
+      const dToks = soNormTokens(it.description);
+      const hits = toks.filter(t => dToks.some(d => d === t || d.startsWith(t) || t.startsWith(d))).length;
+      const score = hits / toks.length;
+      if (score > bestScore) { bestScore = score; best = it; }
+    });
+    const minHits = toks.length === 1 ? 1 : 2;
+    const hitCount = Math.round(bestScore * toks.length);
+    if (best && bestScore >= 0.5 && hitCount >= minHits) out.push({ order: o, item: best });
+  });
+  return out;
+}
+
+function soMatchBannerHTML(inv) {
+  let matches = [];
+  try { matches = soMatchesForInvoice(inv); } catch(e) { return ''; }
+  if (!matches.length) return '';
+  return `<div style="background:#e8f0fe;border:1px solid #7986cb;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#3949ab;">
+    🎯 <strong>Possible special order${matches.length > 1 ? 's' : ''} on this delivery</strong> — set aside, don't shelve:
+    ${matches.map(m => `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:7px;">
+      <span style="background:#fff;border:1px solid #7986cb;border-radius:4px;padding:3px 8px;font-weight:600;">${soEsc(m.order.product)} · Qty ${m.order.qty}</span>
+      <span>for <strong>${soEsc(m.order.customerName)}</strong>${m.order.phone ? ' · ' + soEsc(m.order.phone) : ''}</span>
+      <span style="color:#8a93c7;">↔ invoice: ${soEsc(m.item.description)}</span>
+      <button class="btn btn-sm" style="background:#3949ab;color:white;" onclick="soMarkArrived('${m.order.id}', true)">✓ Mark Arrived</button>
+    </div>`).join('')}
+  </div>`;
+}
+
+// ── Settings (manager-only vendor deadlines) ──
+async function soSaveVendorSettings() {
+  const arr = soVendors().map(v => {
+    const daySel = document.getElementById('so-vd-' + v.name.replace(/\W/g, ''));
+    const cutIn = document.getElementById('so-vc-' + v.name.replace(/\W/g, ''));
+    return { name: v.name, day: daySel && daySel.value !== '' ? Number(daySel.value) : null, cutoff: cutIn ? cutIn.value.trim() : '' };
+  });
+  if (!_cache.soSettings) _cache.soSettings = {};
+  _cache.soSettings['vendors'] = arr;
+  await saveSoSettings('vendors', arr);
+  renderSpecialOrders();
+  alert('Vendor deadlines saved. New orders will use the updated deadlines (existing orders keep their dates).');
+}
+
+// ── CSV export ──
+function exportSpecialOrdersCSV() {
+  const rows = [['Date','Customer','Phone','Email','Product','Qty','Vendor','Status','Deadline','Deposit','Notes','Logged By','Contact Attempts']];
+  (_cache.specialOrders || []).forEach(o => {
+    rows.push([o.date, o.customerName, o.phone || '', o.email || '', o.product, o.qty, o.vendor || '', o.status, o.deadline || '', o.depositTaken ? ('$' + (o.depositAmount || 0)) : '', (o.notes || '').replace(/\n/g, ' '), o.loggedBy || '', (o.contactLog || []).length]);
+  });
+  const csv = rows.map(r => r.map(c => '"' + String(c == null ? '' : c).replace(/"/g, '""') + '"').join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'foothill_special_orders_' + todayKey() + '.csv';
+  a.click();
+}
+
+// ── Render ──
+function soSetTab(t) { soTab = t; renderSpecialOrders(); }
+
+function soStatusBadge(s) {
+  const map = {
+    pending:   ['Waiting to order', '#fdf4eb', '#d4853a'],
+    ordered:   ['Ordered ✓', '#e8f0fe', '#3949ab'],
+    arrived:   ['Arrived — call customer', '#e8f5e9', '#2e7d32'],
+    picked_up: ['Picked up', '#f0f0ee', '#888'],
+    cancelled: ['Cancelled', '#f0f0ee', '#aaa'],
+  };
+  const [label, bg, color] = map[s] || [s, '#eee', '#888'];
+  return `<span style="background:${bg};color:${color};font-size:10px;font-weight:600;padding:3px 9px;border-radius:10px;">${label}</span>`;
+}
+
+function soCardHTML(o) {
+  const today = todayKey();
+  const dueToday = o.status === 'pending' && o.deadline === today;
+  const lastContact = (o.contactLog || []).slice(-1)[0];
+  const reminder = o.status === 'arrived' && o.needsReminder;
+  const daysWaiting = o.arrivedAt ? Math.floor((Date.now() - new Date(o.arrivedAt).getTime()) / 86400000) : 0;
+
+  let actions = '';
+  if (o.status === 'pending') actions = `
+    <button class="btn btn-sm btn-primary" onclick="soMarkOrdered('${o.id}')">Placed on Vendor Order</button>
+    <button class="btn btn-sm btn-outline" onclick="soMarkArrived('${o.id}')">It Arrived</button>
+    <button class="btn btn-sm btn-outline" style="color:#c0392b;" onclick="soCancel('${o.id}')">Cancel</button>`;
+  if (o.status === 'ordered') actions = `
+    <button class="btn btn-sm btn-primary" onclick="soMarkArrived('${o.id}')">It Arrived</button>
+    <button class="btn btn-sm btn-outline" style="color:#c0392b;" onclick="soCancel('${o.id}')">Cancel</button>`;
+  if (o.status === 'arrived') actions = `
+    <button class="btn btn-sm btn-primary" onclick="soToggleContact('${o.id}')">${soExpanded[o.id] ? 'Close' : '📞 Log Contact Attempt'}</button>
+    <button class="btn btn-sm btn-gold" onclick="soMarkPickedUp('${o.id}')">✓ Picked Up</button>
+    <button class="btn btn-sm btn-outline" style="color:#c0392b;" onclick="soCancel('${o.id}')">Cancel</button>`;
+
+  const contactForm = (o.status === 'arrived' && soExpanded[o.id]) ? `
+    <div style="background:#fafaf8;border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:10px;">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+        <select class="form-select" id="so-cm-${o.id}" style="width:auto;font-size:12px;">
+          <option value="">How did you reach out?</option>
+          ${Object.entries(SO_METHODS).map(([k,v]) => `<option value="${k}">${v}</option>`).join('')}
+        </select>
+        <select class="form-select" id="so-co-${o.id}" style="width:auto;font-size:12px;">
+          <option value="">What happened?</option>
+          ${Object.entries(SO_OUTCOMES).map(([k,v]) => `<option value="${k}">${v}</option>`).join('')}
+        </select>
+        <input class="form-input" type="date" id="so-cp-${o.id}" style="width:auto;font-size:12px;" title="Pickup date (if arranged)">
+      </div>
+      <input class="form-input" id="so-cn-${o.id}" placeholder="Note (optional) — e.g. coming Saturday morning" style="font-size:12px;margin-bottom:8px;">
+      <button class="btn btn-sm btn-primary" onclick="soLogContact('${o.id}')">Save Contact Attempt</button>
+    </div>` : '';
+
+  const contactHistory = (o.contactLog || []).length ? `
+    <div style="margin-top:8px;font-size:11px;color:#999;">
+      ${o.contactLog.map(c => `<div style="padding:2px 0;">${SO_METHODS[c.method] || c.method} → ${SO_OUTCOMES[c.outcome] || c.outcome}${c.pickupDate ? ' · pickup ' + soFmtDate(c.pickupDate) : ''}${c.note ? ' · ' + soEsc(c.note) : ''} <span style="color:#ccc;">(${c.by}, ${new Date(c.at).toLocaleDateString()})</span></div>`).join('')}
+    </div>` : '';
+
+  return `
+  <div class="feedback-card" style="${reminder ? 'border-color:#f0c040;background:#fffdf5;' : ''}${dueToday ? 'border-color:#d4853a;' : ''}">
+    ${reminder ? `<div style="background:#fff8e1;border:1px solid #f0c040;border-radius:6px;padding:7px 11px;margin-bottom:10px;font-size:12px;color:#b8860b;">🔔 <strong>Needs follow-up</strong> — last attempt was "${SO_OUTCOMES[lastContact?.outcome] || 'no response'}"${daysWaiting > 0 ? ` · arrived ${daysWaiting} day${daysWaiting > 1 ? 's' : ''} ago` : ''}</div>` : ''}
+    <div class="feedback-header">
+      ${soStatusBadge(o.status)}
+      <strong style="font-size:14px;">${soEsc(o.customerName)}</strong>
+      ${o.phone ? `<a href="tel:${soEsc(o.phone)}" style="font-size:12px;color:var(--gold);text-decoration:none;font-weight:600;">${soEsc(o.phone)}</a>` : ''}
+      ${o.depositTaken ? `<span style="background:#e8f5e9;color:#2e7d32;font-size:10px;font-weight:600;padding:3px 9px;border-radius:10px;">💵 Deposit $${o.depositAmount || 0}</span>` : ''}
+    </div>
+    <div class="feedback-body"><strong>${soEsc(o.product)}</strong> · Qty ${o.qty} · ${soEsc(o.vendor || 'No vendor')}</div>
+    ${o.notes ? `<div class="feedback-body" style="color:#888;font-size:12px;margin-top:2px;">${soEsc(o.notes)}</div>` : ''}
+    <div class="feedback-meta">
+      ${o.deadline && (o.status === 'pending') ? `${dueToday ? '<strong style="color:#d4853a;">⏰ Order deadline TODAY</strong>' : 'Order by ' + soFmtDate(o.deadline)}${soVendorCfg(o.vendor)?.cutoff ? ' ' + soVendorCfg(o.vendor).cutoff : ''} · ` : ''}
+      Logged by ${soEsc(o.loggedBy || '')} · ${soFmtDate(o.date)}
+    </div>
+    ${contactHistory}
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">${actions}</div>
+    ${contactForm}
+  </div>`;
+}
+
+function renderSpecialOrders() {
+  const el = document.getElementById('page-special-orders');
+  if (!el) return;
+  const all = _cache.specialOrders || [];
+  const byNewest = (a, b) => (b.createdAt || '').localeCompare(a.createdAt || '');
+
+  const pending = all.filter(o => o.status === 'pending' || o.status === 'ordered').sort(byNewest);
+  const arrived = all.filter(o => o.status === 'arrived').sort((a, b) => (b.needsReminder ? 1 : 0) - (a.needsReminder ? 1 : 0) || byNewest(a, b));
+  const due = soDueToday();
+  const reminders = soReminderCount();
+  const vendors = soVendors();
+  const isManager = currentUser && currentUser.role === 'manager';
+
+  let list;
+  if (soTab === 'pending') list = pending;
+  else if (soTab === 'arrived') list = arrived;
+  else if (soTab === 'due') list = due;
+  else list = [...all].sort(byNewest);
+
+  const tabBtn = (id, label, count, color) => `
+    <button class="btn btn-sm ${soTab === id ? '' : 'btn-outline'}" style="${soTab === id ? `background:${color || 'var(--dark)'};color:white;` : ''}" onclick="soSetTab('${id}')">${label}${count ? ` (${count})` : ''}</button>`;
+
+  el.innerHTML = `
+    ${due.length ? `<div style="background:#fdf4eb;border:1px solid #d4853a;border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:13px;color:#9a5b1a;">
+      ⏰ <strong>${due.length} special order${due.length > 1 ? 's' : ''} due on today's vendor order${due.length > 1 ? 's' : ''}</strong> — make sure ${due.length > 1 ? 'they get' : 'it gets'} on the order before the cutoff: ${due.map(o => `<span style="background:#fff;border:1px solid #d4853a;border-radius:4px;padding:2px 7px;margin:2px;display:inline-block;">${soEsc(o.product)} (${soEsc(o.vendor)})</span>`).join('')}
+    </div>` : ''}
+
+    <div class="card">
+      <div class="card-title">Log a Special Order</div>
+      <div class="card-sub">Customer wants something we don't stock? Get it on the next vendor order — no more sticky notes.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="form-group"><div class="form-label">Customer name *</div><input class="form-input" id="so-customer" placeholder="First + last name"></div>
+        <div class="form-group"><div class="form-label">Phone *</div><input class="form-input" id="so-phone" type="tel" placeholder="(916) 555-1234"></div>
+      </div>
+      <div class="form-group"><div class="form-label">Email (optional)</div><input class="form-input" id="so-email" type="email" placeholder="For arrival notification"></div>
+      <div style="display:grid;grid-template-columns:2fr 1fr;gap:10px;">
+        <div class="form-group"><div class="form-label">Product *</div><input class="form-input" id="so-product" placeholder="e.g. Fromm Gold Large Breed Adult 30lb"></div>
+        <div class="form-group"><div class="form-label">Qty</div><input class="form-input" id="so-qty" type="number" min="1" value="1"></div>
+      </div>
+      <div class="form-group">
+        <div class="form-label">Vendor</div>
+        <select class="form-select" id="so-vendor" onchange="soVendorChanged()">
+          <option value="">Select vendor…</option>
+          ${vendors.map(v => `<option value="${soEsc(v.name)}">${soEsc(v.name)}${v.day !== null ? ` — orders ${SO_DAYS[v.day]}${v.cutoff ? ' ' + v.cutoff : ''}` : ''}</option>`).join('')}
+          <option value="__other__">Other…</option>
+        </select>
+        <div id="so-deadline-hint" style="font-size:11px;color:#999;margin-top:5px;"></div>
+      </div>
+      <div class="form-group" id="so-vendor-other-wrap" style="display:none;"><div class="form-label">Vendor name</div><input class="form-input" id="so-vendor-other" placeholder="Type the vendor name"></div>
+      <div class="form-group">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <label style="display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;"><input type="checkbox" id="so-deposit-taken" style="width:16px;height:16px;"> Deposit taken</label>
+          <input class="form-input" id="so-deposit-amount" type="number" step="0.01" min="0" placeholder="Amount $" style="width:120px;">
+        </div>
+      </div>
+      <div class="form-group"><div class="form-label">Notes (optional)</div><input class="form-input" id="so-notes" placeholder="e.g. wants the salmon formula specifically, will pay on pickup"></div>
+      <button class="btn btn-primary" onclick="submitSpecialOrder()">Log Special Order</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Order Board</div>
+      <div id="so-summary" style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border);">
+        <div class="feedback-stat"><div class="feedback-stat-num">${pending.length}</div><div class="feedback-stat-label">Open</div></div>
+        <div class="feedback-stat"><div class="feedback-stat-num">${arrived.length}</div><div class="feedback-stat-label">Awaiting Pickup</div></div>
+        <div class="feedback-stat"><div class="feedback-stat-num" style="color:${due.length ? '#d4853a' : 'var(--gold)'};">${due.length}</div><div class="feedback-stat-label">Due Today</div></div>
+        <div class="feedback-stat"><div class="feedback-stat-num" style="color:${reminders ? '#b8860b' : 'var(--gold)'};">${reminders}</div><div class="feedback-stat-label">Need Follow-Up</div></div>
+      </div>
+      <div class="feedback-filters">
+        ${tabBtn('pending', 'Open Orders', pending.length)}
+        ${tabBtn('arrived', 'Arrived', arrived.length, '#2e7d32')}
+        ${tabBtn('due', 'Due Today', due.length, '#d4853a')}
+        ${tabBtn('all', 'All', null)}
+        <button class="btn btn-sm btn-outline" onclick="exportSpecialOrdersCSV()">Export CSV</button>
+      </div>
+      <div>${list.length ? list.map(soCardHTML).join('') : '<div style="text-align:center;padding:30px;color:#bbb;font-size:13px;">Nothing here yet.</div>'}</div>
+    </div>
+
+    ${isManager ? `
+    <div class="card">
+      <div class="card-title">Vendor Order Deadlines</div>
+      <div class="card-sub">Manager only — sets the day each vendor's order is placed so special orders auto-calculate their due date</div>
+      ${vendors.map(v => `
+        <div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;">
+          <div style="flex:1;min-width:140px;font-size:13px;font-weight:500;">${soEsc(v.name)}</div>
+          <select class="form-select" id="so-vd-${v.name.replace(/\W/g, '')}" style="width:auto;font-size:12px;">
+            <option value="">No deadline</option>
+            ${SO_DAYS.map((d, i) => `<option value="${i}" ${v.day === i ? 'selected' : ''}>${d}</option>`).join('')}
+          </select>
+          <input class="form-input" id="so-vc-${v.name.replace(/\W/g, '')}" value="${soEsc(v.cutoff || '')}" placeholder="Cutoff e.g. by 2pm" style="width:140px;font-size:12px;">
+        </div>`).join('')}
+      <button class="btn btn-primary" style="margin-top:14px;" onclick="soSaveVendorSettings()">Save Deadlines</button>
+    </div>` : ''}
+  `;
+}
 
 // Init users on first load (done in launchApp after Supabase load)
 
