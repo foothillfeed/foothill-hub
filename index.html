@@ -1493,6 +1493,11 @@ async function loadAllData(uid) {
       rawFilename: r.raw_filename
     }));
 
+    // Merge same-vendor same-day invoices that arrived via the email pipeline —
+    // they're written straight to Supabase and skip the upload path, so without
+    // this they show up as separate check-ins.
+    await ddMergePending();
+
     // Special orders
     _cache.specialOrders = (specialOrders || []).map(o => ({
       id: o.so_id, customerName: o.customer_name, phone: o.customer_phone || '', email: o.customer_email || '',
@@ -6475,9 +6480,19 @@ function ddEsc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').repl
 async function ddMergePending() {
   const pend = (_cache.deliveryInvoices || []).filter(i =>
     i.status === 'pending' && Object.keys(i.checkedIn || {}).length === 0 && !i.report);
+  // Normalize dates to YYYY-MM-DD so "6/10/26", "06/10/26", "06/10/2026" all group together
+  const normDate = (s) => {
+    if (!s) return '';
+    const m = String(s).match(/(\d{1,4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,4})/);
+    if (!m) return String(s).trim();
+    let y, mo, d;
+    if (m[1].length === 4) { y = m[1]; mo = m[2]; d = m[3]; }
+    else { mo = m[1]; d = m[2]; y = m[3].length === 2 ? '20' + m[3] : m[3]; }
+    return y + '-' + String(mo).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+  };
   const groups = {};
   pend.forEach(inv => {
-    const key = inv.vendor + '|' + inv.deliveryDate;
+    const key = inv.vendor + '|' + normDate(inv.deliveryDate);
     (groups[key] = groups[key] || []).push(inv);
   });
   for (const key of Object.keys(groups)) {
