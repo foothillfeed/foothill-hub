@@ -6126,6 +6126,7 @@ Rules:
 - Strip item codes from start of descriptions (e.g. "115174 PINK EYE SPRAY" -> description = "PINK EYE SPRAY 16oz VETERICYN")
 - Quantities as numbers only — no "EA", "CS", "PK" suffixes
 - distributor field: set to "Newco" if Newco invoice, "VSI" if Veterinary Service Inc invoice, "Phillips" if Phillips Pet Food invoice, "Bar ALE" if Bar ALE invoice, otherwise "Other"
+- The customer account number (e.g. 12669) is NEVER the invoice_number. invoice_number must be the invoice/document number printed on the invoice itself.
 - Return ONLY the JSON object, nothing else`;
 
 const ddToBase64 = (file) => new Promise((res, rej) => {
@@ -6220,6 +6221,12 @@ async function hubInvoiceFiles(fileList) {
       const items = parsed.items || [];
       const allNegativeQty = items.length > 0 && items.every(it => parseFloat(it.ship_qty) < 0 || parseFloat(it.ord_qty) < 0);
       const isCreditMemo = rawUpper.includes('CREDIT MEMO') || totalNum < 0 || allNegativeQty;
+      const isStatement = !isCreditMemo && items.length > 0 && items.every(it => !parseInt(it.ship_qty, 10));
+      if (isStatement) {
+        u.status = 'error';
+        u.msg = '\ud83d\udcc4 This looks like an account STATEMENT (no shippable line items), not a delivery invoice \u2014 not queued for check-in.';
+        return;
+      }
 
       const vendor = parsed.distributor || 'Other';
       const invoiceNumber = parsed.invoice_number || '';
