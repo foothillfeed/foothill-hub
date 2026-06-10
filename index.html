@@ -6111,6 +6111,226 @@ async function saveDeliveryInvoiceProgress(inv) {
   });
 }
 
+
+// ── PDF Upload + Parse (ported from Delivery Day app) ──
+const DD_PARSE_PROMPT = `Parse this distributor invoice PDF for a retail feed store. Return ONLY valid JSON, no markdown.
+
+{"invoice_number":"string","ship_date":"string","invoice_total":"string","distributor":"string","items":[{"upc":"string","item_id":"string","description":"string","ord_qty":"string","ship_qty":"string","net_price":"string","extended":"string"}],"cancelled_items":[{"description":"string","ord_qty":"string"}]}
+
+Rules:
+- Include ALL shipped items in the items array
+- For Newco invoices: ord_qty = ORD QTY column, ship_qty = SHIP QTY column. Items with Cancel in SHIP QTY go in cancelled_items.
+- For VSI invoices: ord_qty = QTY OPEN column, ship_qty = SHIP QTY column. Items where SHIP QTY is 0 or blank go in cancelled_items. Skip fuel surcharge and misc charge lines.
+- For Phillips Pet Food invoices: The QUANTITY block has two numbers — first is ORDER qty, second is SHIPPED qty. ord_qty = ORDER, ship_qty = SHIPPED. Items where SHIPPED = 0 go in cancelled_items. Descriptions may wrap to a second line — concatenate them into one description. Expand common abbreviations: TOW = Taste of the Wild, DIA NAT = Diamond Naturals, NB LID = Natural Balance Lid, CNNE = Canine, CKN = Chicken, LMB = Lamb, BSN = Bison, VNS = Venison, FELN = Feline, PUP = Puppy, ADLT = Adult, SM BRD = Small Breed, LG BRD = Large Breed, RBBT = Rabbit, ALF = Alfalfa, THAY = Timothy Hay, GF = Grain Free, RC = Rice. Strip notes like "*REPL 404020", "*IF OS USE...", "- This Items Order Quantity Increased to Meet Minimum -". Skip fuel surcharge lines and the Open Recap page (page 4 with account balance summary). Invoice total = ** TOTAL ** value on last invoice page.
+- For Bar ALE invoices: ord_qty = Ord Qty column, ship_qty = Ship Qty column. The UOM column embeds the bag weight (e.g. BAG-40 means a 40 lb bag) — include the weight in the description (e.g. "40lb"). EXCLUDE discount/adjustment lines, especially item codes 1425 and 0573 — these are not received product. Items with Ship Qty of 0 go in cancelled_items.
+- Strip item codes from start of descriptions (e.g. "115174 PINK EYE SPRAY" -> description = "PINK EYE SPRAY 16oz VETERICYN")
+- Quantities as numbers only — no "EA", "CS", "PK" suffixes
+- distributor field: set to "Newco" if Newco invoice, "VSI" if Veterinary Service Inc invoice, "Phillips" if Phillips Pet Food invoice, "Bar ALE" if Bar ALE invoice, otherwise "Other"
+- Return ONLY the JSON object, nothing else`;
+
+const ddToBase64 = (file) => new Promise((res, rej) => {
+  const r = new FileReader();
+  r.onload = () => res(r.result.split(',')[1]);
+  r.onerror = () => rej(new Error('Could not read file'));
+  r.readAsDataURL(file);
+});
+
+function ddRepairJSON(text) {
+  let s = text.trim();
+  s = s.replace(/,\s*"[^"]*"?\s*:\s*"[^"]*$/, '');
+  s = s.replace(/,\s*"[^"]*"?\s*:\s*$/, '');
+  s = s.replace(/,\s*"[^"]*$/, '');
+  s = s.replace(/,\s*$/, '');
+  let opens = 0, objs = 0;
+  for (const ch of s) { if (ch === '[') opens++; else if (ch === ']') opens--; else if (ch === '{') objs++; else if (ch === '}') objs--; }
+  while (objs > 0) { s += '}'; objs--; }
+  while (opens > 0) { s += ']'; opens--; }
+  return s;
+}
+
+// Upload progress tracker (per session)
+let _ddUploads = [];
+
+async function ddParseInvoicePDF(b64) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': getAnthropicKey(),
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 16000,
+      messages: [{ role: 'user', content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
+        { type: 'text', text: DD_PARSE_PROMPT }
+      ]}]
+    })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || 'API error');
+  const raw = data.content.map(b => b.text || '').join('').replace(/```json|```/g, '').trim();
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch (e1) {
+    try { parsed = JSON.parse(ddRepairJSON(raw)); }
+    catch (e2) { throw new Error('Could not parse invoice — try re-uploading.'); }
+  }
+  return { parsed, raw };
+}
+
+// Last known prices per item, scanned from existing invoices of the same vendor (newest first)
+function ddLastPricesForVendor(vendor) {
+  const prices = {};
+  const invs = (_cache.deliveryInvoices || [])
+    .filter(i => i.vendor === vendor && i.status !== 'credit' && i.status !== 'hidden_test_row')
+    .sort((a, b) => String(b.parsedAt || '').localeCompare(String(a.parsedAt || '')));
+  invs.forEach(inv => {
+    (inv.items || []).forEach(it => {
+      const key = String(it.item_id || it.upc || '').trim();
+      if (key && prices[key] === undefined) prices[key] = parseFloat(it.net_price);
+    });
+  });
+  return prices;
+}
+
+async function hubInvoiceFiles(fileList) {
+  const pdfs = Array.from(fileList || []).filter(f => f.type === 'application/pdf');
+  if (!pdfs.length) { alert('Please drop PDF files only.'); return; }
+
+  const jobs = pdfs.map(f => {
+    const u = { name: f.name, status: 'parsing', msg: 'Parsing\u2026' };
+    _ddUploads.unshift(u);
+    return { file: f, u };
+  });
+  renderDeliveryCheckin();
+
+  await Promise.all(jobs.map(async ({ file, u }) => {
+    try {
+      const b64 = await ddToBase64(file);
+      const { parsed, raw } = await ddParseInvoicePDF(b64);
+
+      // Credit memo detection (triple-redundant) — never enters the check-in flow
+      const rawUpper = raw.toUpperCase();
+      const totalNum = parseFloat(parsed.invoice_total) || 0;
+      const items = parsed.items || [];
+      const allNegativeQty = items.length > 0 && items.every(it => parseFloat(it.ship_qty) < 0 || parseFloat(it.ord_qty) < 0);
+      const isCreditMemo = rawUpper.includes('CREDIT MEMO') || totalNum < 0 || allNegativeQty;
+
+      const vendor = parsed.distributor || 'Other';
+      const invoiceNumber = parsed.invoice_number || '';
+
+      // Duplicate guard
+      const dup = (_cache.deliveryInvoices || []).find(i =>
+        i.vendor === vendor && String(i.invoiceNumber) === String(invoiceNumber) && i.status !== 'hidden_test_row');
+      if (dup && !isCreditMemo) {
+        u.status = 'error';
+        u.msg = vendor + ' invoice #' + invoiceNumber + ' is already loaded.';
+        return;
+      }
+
+      const rowId = (isCreditMemo ? 'cr_' : 'inv_') + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+
+      if (isCreditMemo) {
+        const row = {
+          id: rowId, vendor: vendor, invoice_number: invoiceNumber,
+          delivery_date: parsed.ship_date || todayKey(), invoice_total: parsed.invoice_total || '0',
+          items: items, cancelled_items: [], price_changes: [],
+          status: 'credit', checked_in: {}, flags: {}, received_qty: {},
+          parsed_at: new Date().toISOString(), raw_filename: file.name
+        };
+        await sbUpsert('ff_delivery_invoices', row);
+        if (!_cache.deliveryInvoices) _cache.deliveryInvoices = [];
+        _cache.deliveryInvoices.push({ id: rowId, vendor, invoiceNumber, deliveryDate: row.delivery_date, invoiceTotal: row.invoice_total, items, cancelledItems: [], priceChanges: [], status: 'credit', checkedIn: {}, flags: {}, receivedQty: {}, parsedAt: row.parsed_at, rawFilename: file.name });
+        u.status = 'credit';
+        u.msg = '\u26d4 CREDIT MEMO blocked: ' + vendor + ' #' + invoiceNumber + ' ($' + Math.abs(totalNum).toFixed(2) + '). Logged \u2014 do NOT create a receiving voucher.';
+        return;
+      }
+
+      // Price change detection vs last known prices for this vendor
+      const lastPrices = ddLastPricesForVendor(vendor);
+      const priceChanges = [];
+      items.forEach(it => {
+        const key = String(it.item_id || it.upc || '').trim();
+        const cur = parseFloat(it.net_price);
+        if (key && !isNaN(cur) && lastPrices[key] !== undefined && !isNaN(lastPrices[key]) && lastPrices[key] !== cur) {
+          priceChanges.push({ description: it.description, previous: lastPrices[key].toFixed(2), current: cur.toFixed(2) });
+        }
+      });
+
+      // Auto-flag shorts (shipped less than ordered)
+      const autoFlags = {};
+      items.forEach((it, i) => {
+        if (parseInt(it.ord_qty) > parseInt(it.ship_qty)) autoFlags[i] = 'short';
+      });
+
+      const row = {
+        id: rowId, vendor: vendor, invoice_number: invoiceNumber,
+        delivery_date: parsed.ship_date || todayKey(), invoice_total: parsed.invoice_total || '',
+        items: items, cancelled_items: parsed.cancelled_items || [], price_changes: priceChanges,
+        status: 'pending', checked_in: {}, flags: autoFlags, received_qty: {},
+        parsed_at: new Date().toISOString(), raw_filename: file.name
+      };
+      await sbUpsert('ff_delivery_invoices', row);
+      if (!_cache.deliveryInvoices) _cache.deliveryInvoices = [];
+      _cache.deliveryInvoices.push({ id: rowId, vendor, invoiceNumber, deliveryDate: row.delivery_date, invoiceTotal: row.invoice_total, items, cancelledItems: row.cancelled_items, priceChanges, status: 'pending', checkedIn: {}, flags: autoFlags, receivedQty: {}, parsedAt: row.parsed_at, rawFilename: file.name });
+
+      u.status = 'done';
+      u.msg = '\u2713 ' + vendor + ' invoice #' + invoiceNumber + ' \u2014 ' + items.length + ' items ready to check in.';
+    } catch (e) {
+      u.status = 'error';
+      u.msg = (e && e.message) ? e.message : 'Upload failed.';
+    } finally {
+      renderDeliveryCheckin();
+    }
+  }));
+}
+
+function ddDropHandler(ev) {
+  ev.preventDefault();
+  const dz = document.getElementById('dd-dropzone');
+  if (dz) dz.style.background = '';
+  hubInvoiceFiles(ev.dataTransfer.files);
+}
+
+function ddUploadZoneHTML() {
+  const statuses = _ddUploads.slice(0, 6).map(u => {
+    const color = u.status === 'done' ? '#2e7d32' : u.status === 'error' ? '#c0392b' : u.status === 'credit' ? '#b8860b' : '#888';
+    const spin = u.status === 'parsing' ? '\u23f3 ' : '';
+    return '<div style="font-size:12px;color:' + color + ';padding:4px 0;border-bottom:1px solid #f0f0ec;">' + spin + '<strong>' + u.name + '</strong> \u2014 ' + u.msg + '</div>';
+  }).join('');
+
+  return '<div class="card" style="margin-bottom:14px;">' +
+    '<div id="dd-dropzone" onclick="document.getElementById(\'dd-file-input\').click()" ' +
+      'ondragover="event.preventDefault();this.style.background=\'#eef4ee\';" ' +
+      'ondragleave="this.style.background=\'\';" ' +
+      'ondrop="ddDropHandler(event)" ' +
+      'style="border:2px dashed #2D5233;border-radius:10px;padding:22px 16px;text-align:center;cursor:pointer;transition:background 0.15s;">' +
+      '<div style="font-size:26px;margin-bottom:6px;">\ud83d\udcc4</div>' +
+      '<div style="font-weight:700;font-size:14px;color:#2D5233;">Drop invoice PDFs here \u2014 or tap to upload</div>' +
+      '<div style="font-size:11px;color:#aaa;margin-top:4px;">Newco \u00b7 VSI \u00b7 Phillips \u00b7 Bar ALE \u00b7 parses automatically, multiple PDFs OK</div>' +
+    '</div>' +
+    '<input type="file" id="dd-file-input" accept="application/pdf" multiple style="display:none" onchange="hubInvoiceFiles(this.files);this.value=\'\';">' +
+    (statuses ? '<div style="margin-top:10px;">' + statuses + '</div>' : '') +
+  '</div>';
+}
+
+function ddCreditListHTML() {
+  const credits = (_cache.deliveryInvoices || []).filter(i => i.status === 'credit').slice(-5).reverse();
+  if (!credits.length) return '';
+  return '<div class="card">' +
+    '<div class="card-title">\u26d4 Credit Memos (blocked from check-in)</div>' +
+    credits.map(c =>
+      '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;">' +
+        '<div><strong>' + c.vendor + '</strong> \u00b7 #' + c.invoiceNumber + ' \u00b7 ' + c.deliveryDate + '</div>' +
+        '<div style="color:#b8860b;font-weight:600;">$' + Math.abs(parseFloat(c.invoiceTotal) || 0).toFixed(2) + ' credit</div>' +
+      '</div>').join('') +
+    '<div style="font-size:11px;color:#aaa;margin-top:8px;">Never create a Retail Pro receiving voucher from a credit memo.</div>' +
+  '</div>';
+}
+
 function renderDeliveryCheckin() {
   const el = document.getElementById('page-checkin-delivery');
   if (!el) return;
@@ -6124,11 +6344,11 @@ function renderDeliveryCheckin() {
   const RED = '#c0392b';
 
   if (pending.length === 0) {
-    el.innerHTML = `
+    el.innerHTML = ddUploadZoneHTML() + `
       <div class="card" style="text-align:center;padding:40px 24px;">
         <div style="font-size:48px;margin-bottom:16px;">📭</div>
         <div style="font-family:'Playfair Display',serif;font-size:20px;margin-bottom:8px;">No pending deliveries</div>
-        <div style="font-size:13px;color:#888;margin-bottom:20px;">When a vendor emails an invoice to orders@foothillfeedloomis.com, it will automatically appear here ready to check in.</div>
+        <div style="font-size:13px;color:#888;margin-bottom:20px;">Drag a vendor invoice PDF into the box above to start a check-in. Invoices emailed to orders@foothillfeedloomis.com will also appear here automatically once the email pipeline is running.</div>
         <div style="font-size:12px;color:#bbb;">Vendors: Newco · VSI · Phillips · Bar ALE</div>
       </div>
       ${done.length > 0 ? `
@@ -6139,11 +6359,11 @@ function renderDeliveryCheckin() {
             <div><strong>${i.vendor}</strong> · Invoice #${i.invoiceNumber}</div>
             <div style="color:#2e7d32;font-weight:500;">✓ Done · ${i.deliveryDate}</div>
           </div>`).join('')}
-      </div>` : ''}`;
+      </div>` : ''}` + ddCreditListHTML();
     return;
   }
 
-  el.innerHTML = pending.map(inv => {
+  el.innerHTML = ddUploadZoneHTML() + pending.map(inv => {
     const items = inv.items || [];
     const total = items.length;
     const checkedCount = Object.keys(inv.checkedIn || {}).length;
@@ -6160,7 +6380,7 @@ function renderDeliveryCheckin() {
             <span style="font-size:13px;color:#888;">Invoice #${inv.invoiceNumber}</span>
           </div>
           <div style="font-family:'Playfair Display',serif;font-size:18px;">Delivery · ${inv.deliveryDate}</div>
-          <div style="font-size:12px;color:#aaa;margin-top:2px;">${total} items · $${inv.invoiceTotal} total · Loaded automatically from email</div>
+          <div style="font-size:12px;color:#aaa;margin-top:2px;">${total} items · $${inv.invoiceTotal} total</div>
         </div>
         <div style="text-align:right;">
           <div style="font-size:22px;font-weight:800;color:${vendorColor};font-family:'Playfair Display',serif;">${pct}%</div>
@@ -6220,7 +6440,7 @@ function renderDeliveryCheckin() {
         <div><strong>${i.vendor}</strong> · Invoice #${i.invoiceNumber}</div>
         <div style="color:#2e7d32;font-weight:500;">✓ Done · ${i.deliveryDate}</div>
       </div>`).join('')}
-  </div>` : '');
+  </div>` : '') + ddCreditListHTML();
 }
 
 function toggleDeliveryItem(invId, idx) {
