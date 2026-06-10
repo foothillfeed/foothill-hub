@@ -6214,7 +6214,9 @@ async function hubInvoiceFiles(fileList) {
 
       // Credit memo detection (triple-redundant) — never enters the check-in flow
       const rawUpper = raw.toUpperCase();
-      const totalNum = parseFloat(parsed.invoice_total) || 0;
+      const totalStr = String(parsed.invoice_total || '').replace(/,/g, '').trim();
+      let totalNum = Math.abs(parseFloat(totalStr.replace(/[()\-]/g, ''))) || 0;
+      if (totalStr.indexOf('-') > -1 || (totalStr.indexOf('(') > -1 && totalStr.indexOf(')') > -1)) totalNum = -totalNum;
       const items = parsed.items || [];
       const allNegativeQty = items.length > 0 && items.every(it => parseFloat(it.ship_qty) < 0 || parseFloat(it.ord_qty) < 0);
       const isCreditMemo = rawUpper.includes('CREDIT MEMO') || totalNum < 0 || allNegativeQty;
