@@ -889,6 +889,10 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
     <div class="page" id="page-special-orders"></div>
 
 
+    <!-- VENDOR CATALOG -->
+    <div class="page" id="page-catalog"></div>
+
+
     <!-- DELIVERY LOG -->
     <div class="page" id="page-delivery">
       <div class="card">
@@ -1453,6 +1457,7 @@ async function loadAllData(uid) {
       status: o.status || 'pending', deadline: o.deadline_date || null,
       orderedAt: o.ordered_at, arrivedAt: o.arrived_at, pickedUpAt: o.picked_up_at, cancelledAt: o.cancelled_at,
       contactLog: o.contact_log || [], needsReminder: !!o.needs_reminder,
+      itemNumber: o.item_number || null, catalogId: o.catalog_id || null,
       loggedBy: o.logged_by, uid: o.uid, date: o.date, createdAt: o.created_at
     }));
     _cache.soSettings = {};
@@ -1551,6 +1556,7 @@ async function saveSpecialOrder(o) {
     ordered_at: o.orderedAt || null, arrived_at: o.arrivedAt || null,
     picked_up_at: o.pickedUpAt || null, cancelled_at: o.cancelledAt || null,
     contact_log: o.contactLog || [], needs_reminder: !!o.needsReminder,
+    item_number: o.itemNumber || null, catalog_id: o.catalogId || null,
     logged_by: o.loggedBy, uid: o.uid, date: o.date
   });
 }
@@ -1791,6 +1797,7 @@ function buildNav() {
   if (currentUser.role === 'manager' || currentUser.role === 'lead') pages.push({ id:'availability', label:'Availability' });
   pages.push({ id:'feedback', label:'Customer Log' });
   pages.push({ id:'special-orders', label:'Special Orders' });
+  pages.push({ id:'catalog', label:'Catalog' });
   pages.push({ id:'checkin-delivery', label:'📦 Receive Delivery' });
   pages.push({ id:'schedule', label:'Schedule' });
   pages.push({ id:'timeoff', label:'Time Off' });
@@ -1824,6 +1831,7 @@ function showPage(id) {
     if (id==='availability') renderAvailabilityEditor();
     if (id==='feedback') renderFeedback();
     if (id==='special-orders') renderSpecialOrders();
+    if (id==='catalog') renderCatalog();
     if (id==='delivery') renderDeliveryLog();
     if (id==='checkin-delivery') {
       // Kill the inactivity timer immediately — no timeout on this page
@@ -6307,14 +6315,14 @@ async function refreshDeliveryInvoices() {
 // ══════════════════════════════════════════
 const SO_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const SO_DEFAULT_VENDORS = [
-  { name:'Newco', day:3, cutoff:'' },
-  { name:'VSI', day:2, cutoff:'by 2pm' },
-  { name:'Phillips', day:4, cutoff:'by 10am' },
-  { name:'Bar ALE', day:null, cutoff:'' },
-  { name:'Elk Grove Milling', day:null, cutoff:'' },
-  { name:'Volkman Pet', day:null, cutoff:'' },
-  { name:'Associated Feed', day:null, cutoff:'' },
-  { name:'Farmers Feed', day:null, cutoff:'' },
+  { name:'Newco', day:3, cutoff:'by 2pm', freq:'weekly' },
+  { name:'VSI', day:2, cutoff:'by 2pm', freq:'weekly' },
+  { name:'Phillips', day:4, cutoff:'by 10am', freq:'weekly' },
+  { name:'Bar ALE', day:3, cutoff:'by 11am', freq:'biweekly', anchor:'2026-05-13' },
+  { name:'Elk Grove Milling', day:null, cutoff:'', freq:'weekly' },
+  { name:'Volkman Pet', day:4, cutoff:'afternoon', freq:'biweekly', anchor:'2026-05-21' },
+  { name:'Associated Feed', day:null, cutoff:'', freq:'weekly' },
+  { name:'Farmers Feed', day:1, cutoff:'by 10am', freq:'weekly' },
 ];
 let soTab = 'pending';
 let soExpanded = {};
@@ -6328,7 +6336,7 @@ function soVendors() {
       const s = saved.find(v => v.name === d.name);
       if (!s) return d;
       const day = (s.day === '' || s.day === null || s.day === undefined) ? null : Number(s.day);
-      return { name: d.name, day, cutoff: s.cutoff || '' };
+      return { name: d.name, day, cutoff: s.cutoff || '', freq: s.freq || d.freq || 'weekly', anchor: s.anchor || d.anchor || null };
     });
   }
   return SO_DEFAULT_VENDORS;
@@ -6336,11 +6344,20 @@ function soVendors() {
 
 function soVendorCfg(name) { return soVendors().find(v => v.name === name) || null; }
 
-function soNextDeadline(day) {
+function soNextDeadline(cfg) {
+  if (!cfg) return null;
+  const day = (typeof cfg === 'object') ? cfg.day : cfg;
   if (day === null || day === undefined || day === '') return null;
   const d = new Date();
   const diff = (Number(day) - d.getDay() + 7) % 7;
-  return dateKey(new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff));
+  let dl = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff);
+  if (typeof cfg === 'object' && cfg.freq === 'biweekly' && cfg.anchor) {
+    const [ay, am, ad] = cfg.anchor.split('-').map(Number);
+    const anchor = new Date(ay, am - 1, ad);
+    const weeks = Math.round((dl - anchor) / (7 * 86400000));
+    if (((weeks % 2) + 2) % 2 !== 0) dl = new Date(dl.getFullYear(), dl.getMonth(), dl.getDate() + 7);
+  }
+  return dateKey(dl);
 }
 
 function soFmtDate(key) {
@@ -6378,7 +6395,7 @@ function soVendorChanged() {
   if (hint) {
     const cfg = soVendorCfg(sel.value);
     if (cfg && cfg.day !== null) {
-      hint.textContent = `Order deadline: ${SO_DAYS[cfg.day]}${cfg.cutoff ? ' ' + cfg.cutoff : ''} — next due ${soFmtDate(soNextDeadline(cfg.day))}`;
+      hint.textContent = `Order deadline: ${SO_DAYS[cfg.day]}${cfg.cutoff ? ' ' + cfg.cutoff : ''}${cfg.freq === 'biweekly' ? ' (every other week)' : ''} — next due ${soFmtDate(soNextDeadline(cfg))}`;
     } else if (sel.value && sel.value !== '__other__') {
       hint.textContent = 'No order deadline set for this vendor yet — a manager can add one in Vendor Deadlines below.';
     } else {
@@ -6407,7 +6424,7 @@ async function submitSpecialOrder() {
 
   const vendor = vendorSel === '__other__' ? vendorOther : vendorSel;
   const cfg = soVendorCfg(vendor);
-  const deadline = cfg && cfg.day !== null ? soNextDeadline(cfg.day) : null;
+  const deadline = cfg && cfg.day !== null ? soNextDeadline(cfg) : null;
 
   const o = {
     id: 'so' + Date.now(),
@@ -6416,9 +6433,12 @@ async function submitSpecialOrder() {
     status: 'pending', deadline,
     orderedAt: null, arrivedAt: null, pickedUpAt: null, cancelledAt: null,
     contactLog: [], needsReminder: false,
+    itemNumber: _soPicked ? _soPicked.item_number : null,
+    catalogId: _soPicked ? _soPicked.cat_id : null,
     loggedBy: currentUser.name, uid: currentUser.id, date: todayKey(),
     createdAt: new Date().toISOString()
   };
+  _soPicked = null;
   if (!_cache.specialOrders) _cache.specialOrders = [];
   _cache.specialOrders.push(o);
   await saveSpecialOrder(o);
@@ -6508,6 +6528,10 @@ function soMatchesForInvoice(inv) {
   const orders = (_cache.specialOrders || []).filter(o => (o.status === 'pending' || o.status === 'ordered') && o.vendor === inv.vendor);
   const out = [];
   orders.forEach(o => {
+    if (o.itemNumber) {
+      const exact = (inv.items || []).find(it => String(it.item_id || '').trim() === String(o.itemNumber).trim());
+      if (exact) { out.push({ order: o, item: exact }); return; }
+    }
     const toks = soNormTokens(o.product);
     if (!toks.length) return;
     let best = null, bestScore = 0;
@@ -6542,9 +6566,16 @@ function soMatchBannerHTML(inv) {
 // ── Settings (manager-only vendor deadlines) ──
 async function soSaveVendorSettings() {
   const arr = soVendors().map(v => {
-    const daySel = document.getElementById('so-vd-' + v.name.replace(/\W/g, ''));
-    const cutIn = document.getElementById('so-vc-' + v.name.replace(/\W/g, ''));
-    return { name: v.name, day: daySel && daySel.value !== '' ? Number(daySel.value) : null, cutoff: cutIn ? cutIn.value.trim() : '' };
+    const id = v.name.replace(/\W/g, '');
+    const daySel = document.getElementById('so-vd-' + id);
+    const cutIn = document.getElementById('so-vc-' + id);
+    const freqSel = document.getElementById('so-vf-' + id);
+    const day = daySel && daySel.value !== '' ? Number(daySel.value) : null;
+    const freq = freqSel ? freqSel.value : (v.freq || 'weekly');
+    let anchor = v.anchor || null;
+    if (freq === 'biweekly' && !anchor && day !== null) anchor = soNextDeadline({ day, freq: 'weekly' });
+    if (freq === 'weekly') anchor = v.anchor || null;
+    return { name: v.name, day, cutoff: cutIn ? cutIn.value.trim() : '', freq, anchor };
   });
   if (!_cache.soSettings) _cache.soSettings = {};
   _cache.soSettings['vendors'] = arr;
@@ -6555,9 +6586,9 @@ async function soSaveVendorSettings() {
 
 // ── CSV export ──
 function exportSpecialOrdersCSV() {
-  const rows = [['Date','Customer','Phone','Email','Product','Qty','Vendor','Status','Deadline','Deposit','Notes','Logged By','Contact Attempts']];
+  const rows = [['Date','Customer','Phone','Email','Product','Item #','Qty','Vendor','Status','Deadline','Deposit','Notes','Logged By','Contact Attempts']];
   (_cache.specialOrders || []).forEach(o => {
-    rows.push([o.date, o.customerName, o.phone || '', o.email || '', o.product, o.qty, o.vendor || '', o.status, o.deadline || '', o.depositTaken ? ('$' + (o.depositAmount || 0)) : '', (o.notes || '').replace(/\n/g, ' '), o.loggedBy || '', (o.contactLog || []).length]);
+    rows.push([o.date, o.customerName, o.phone || '', o.email || '', o.product, o.itemNumber || '', o.qty, o.vendor || '', o.status, o.deadline || '', o.depositTaken ? ('$' + (o.depositAmount || 0)) : '', (o.notes || '').replace(/\n/g, ' '), o.loggedBy || '', (o.contactLog || []).length]);
   });
   const csv = rows.map(r => r.map(c => '"' + String(c == null ? '' : c).replace(/"/g, '""') + '"').join(',')).join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -6633,7 +6664,7 @@ function soCardHTML(o) {
       ${o.phone ? `<a href="tel:${soEsc(o.phone)}" style="font-size:12px;color:var(--gold);text-decoration:none;font-weight:600;">${soEsc(o.phone)}</a>` : ''}
       ${o.depositTaken ? `<span style="background:#e8f5e9;color:#2e7d32;font-size:10px;font-weight:600;padding:3px 9px;border-radius:10px;">💵 Deposit $${o.depositAmount || 0}</span>` : ''}
     </div>
-    <div class="feedback-body"><strong>${soEsc(o.product)}</strong> · Qty ${o.qty} · ${soEsc(o.vendor || 'No vendor')}</div>
+    <div class="feedback-body"><strong>${soEsc(o.product)}</strong> · Qty ${o.qty} · ${soEsc(o.vendor || 'No vendor')}${o.itemNumber ? ` · <span style="color:#999;">#${soEsc(o.itemNumber)}</span>` : ''}</div>
     ${o.notes ? `<div class="feedback-body" style="color:#888;font-size:12px;margin-top:2px;">${soEsc(o.notes)}</div>` : ''}
     <div class="feedback-meta">
       ${o.deadline && (o.status === 'pending') ? `${dueToday ? '<strong style="color:#d4853a;">⏰ Order deadline TODAY</strong>' : 'Order by ' + soFmtDate(o.deadline)}${soVendorCfg(o.vendor)?.cutoff ? ' ' + soVendorCfg(o.vendor).cutoff : ''} · ` : ''}
@@ -6681,14 +6712,17 @@ function renderSpecialOrders() {
       </div>
       <div class="form-group"><div class="form-label">Email (optional)</div><input class="form-input" id="so-email" type="email" placeholder="For arrival notification"></div>
       <div style="display:grid;grid-template-columns:2fr 1fr;gap:10px;">
-        <div class="form-group"><div class="form-label">Product *</div><input class="form-input" id="so-product" placeholder="e.g. Fromm Gold Large Breed Adult 30lb"></div>
+        <div class="form-group" style="position:relative;"><div class="form-label">Product *</div><input class="form-input" id="so-product" placeholder="Start typing — the catalog will suggest items" autocomplete="off" oninput="soProductInput()">
+          <div id="so-typeahead" style="display:none;position:absolute;z-index:50;left:0;right:0;top:100%;background:white;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.12);max-height:300px;overflow-y:auto;"></div>
+          <div id="so-pick-info" style="font-size:11px;color:#888;margin-top:5px;"></div>
+        </div>
         <div class="form-group"><div class="form-label">Qty</div><input class="form-input" id="so-qty" type="number" min="1" value="1"></div>
       </div>
       <div class="form-group">
         <div class="form-label">Vendor</div>
         <select class="form-select" id="so-vendor" onchange="soVendorChanged()">
           <option value="">Select vendor…</option>
-          ${vendors.map(v => `<option value="${soEsc(v.name)}">${soEsc(v.name)}${v.day !== null ? ` — orders ${SO_DAYS[v.day]}${v.cutoff ? ' ' + v.cutoff : ''}` : ''}</option>`).join('')}
+          ${vendors.map(v => `<option value="${soEsc(v.name)}">${soEsc(v.name)}${v.day !== null ? ` — orders ${SO_DAYS[v.day]}${v.cutoff ? ' ' + v.cutoff : ''}${v.freq === 'biweekly' ? ' (every other wk)' : ''}` : ''}</option>`).join('')}
           <option value="__other__">Other…</option>
         </select>
         <div id="so-deadline-hint" style="font-size:11px;color:#999;margin-top:5px;"></div>
@@ -6734,10 +6768,220 @@ function renderSpecialOrders() {
             ${SO_DAYS.map((d, i) => `<option value="${i}" ${v.day === i ? 'selected' : ''}>${d}</option>`).join('')}
           </select>
           <input class="form-input" id="so-vc-${v.name.replace(/\W/g, '')}" value="${soEsc(v.cutoff || '')}" placeholder="Cutoff e.g. by 2pm" style="width:140px;font-size:12px;">
+          <select class="form-select" id="so-vf-${v.name.replace(/\W/g, '')}" style="width:auto;font-size:12px;">
+            <option value="weekly" ${v.freq !== 'biweekly' ? 'selected' : ''}>Weekly</option>
+            <option value="biweekly" ${v.freq === 'biweekly' ? 'selected' : ''}>Every other wk</option>
+          </select>
         </div>`).join('')}
       <button class="btn btn-primary" style="margin-top:14px;" onclick="soSaveVendorSettings()">Save Deadlines</button>
+    </div>
+    <div class="card">
+      <div class="card-title">Markup % by Category</div>
+      <div class="card-sub">Manager only — sets the suggested retail price shown when staff quote a special order (retail = cost + markup)</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;">
+        ${Object.entries(SO_CAT_LABELS).map(([k, label]) => `
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div style="flex:1;font-size:12px;">${label}</div>
+            <input class="form-input" id="so-mk-${k}" type="number" min="0" max="500" value="${soMarkups()[k] !== undefined ? soMarkups()[k] : 50}" style="width:64px;font-size:12px;padding:6px 8px;">
+            <span style="font-size:11px;color:#999;">%</span>
+          </div>`).join('')}
+      </div>
+      <button class="btn btn-primary" style="margin-top:14px;" onclick="soSaveMarkups()">Save Markups</button>
     </div>` : ''}
   `;
+  if (_soPendingPick) { const p = _soPendingPick; _soPendingPick = null; soApplyPick(p); }
+}
+
+// ══════════════════════════════════════════
+// VENDOR CATALOG — typeahead, catalog page, markups
+// ══════════════════════════════════════════
+const SO_DEFAULT_MARKUPS = { dog_food:40, cat_food:40, treats:60, supplements:55, toys:60, gear:60, litter:35, beds:50, grooming:55, small_pet:50, bird:50, reptile:50, fish:50, general:50 };
+const SO_CAT_LABELS = { dog_food:'Dog Food', cat_food:'Cat Food', treats:'Treats & Chews', supplements:'Supplements', toys:'Toys', gear:'Gear & Crates', litter:'Litter', beds:'Beds', grooming:'Grooming', small_pet:'Small Pet', bird:'Bird', reptile:'Reptile', fish:'Fish', general:'General' };
+
+function soMarkups() { return Object.assign({}, SO_DEFAULT_MARKUPS, (_cache.soSettings || {})['markups'] || {}); }
+
+function soSuggestRetail(item) {
+  const base = item.each_cost || item.cost;
+  if (!base) return null;
+  const pct = soMarkups()[item.category] !== undefined ? soMarkups()[item.category] : 50;
+  const raw = base * (1 + pct / 100);
+  return Math.ceil(raw + 0.01) - 0.01;
+}
+
+async function soCatalogQuery(term, distributor, category, limit, offset) {
+  try {
+    let q = sb.from('ff_vendor_catalog').select('*', { count: 'exact' });
+    (term || '').replace(/[%,()*]/g, ' ').split(/\s+/).filter(w => w.length >= 2).slice(0, 5).forEach(w => {
+      q = q.or(`description.ilike.%${w}%,brand.ilike.%${w}%,item_number.ilike.%${w}%`);
+    });
+    if (distributor) q = q.eq('distributor', distributor);
+    if (category) q = q.eq('category', category);
+    q = q.order('description').range(offset, offset + limit - 1);
+    const { data, count, error } = await q;
+    if (error) { console.error('catalog query:', error); return { rows: [], count: 0 }; }
+    return { rows: data || [], count: count || 0 };
+  } catch (e) { console.error(e); return { rows: [], count: 0 }; }
+}
+
+// ── Typeahead on the special order product field ──
+let _soTypeTimer = null, _soPicked = null, _soSuggestions = [], _soPendingPick = null;
+
+function soProductInput() {
+  _soPicked = null;
+  const info = document.getElementById('so-pick-info');
+  if (info) info.innerHTML = '';
+  clearTimeout(_soTypeTimer);
+  const inp = document.getElementById('so-product');
+  const dd = document.getElementById('so-typeahead');
+  const term = inp ? inp.value.trim() : '';
+  if (term.length < 3) { if (dd) dd.style.display = 'none'; return; }
+  _soTypeTimer = setTimeout(() => soRunTypeahead(term), 250);
+}
+
+async function soRunTypeahead(term) {
+  const res = await soCatalogQuery(term, '', '', 8, 0);
+  _soSuggestions = res.rows;
+  const dd = document.getElementById('so-typeahead');
+  if (!dd) return;
+  const cur = document.getElementById('so-product');
+  if (!cur || cur.value.trim().length < 3) { dd.style.display = 'none'; return; }
+  if (!res.rows.length) { dd.style.display = 'none'; return; }
+  dd.innerHTML = res.rows.map((it, i) => {
+    const base = it.each_cost || it.cost;
+    const retail = soSuggestRetail(it);
+    return `<div onclick="soPickItem(${i})" style="padding:9px 12px;border-bottom:1px solid var(--border);cursor:pointer;" onmouseover="this.style.background='#faf8f4'" onmouseout="this.style.background='white'">
+      <div style="font-size:13px;font-weight:500;">${soEsc(it.description)}</div>
+      <div style="font-size:11px;color:#999;">${soEsc(it.brand || '')} · <span style="color:var(--gold);font-weight:600;">${soEsc(it.distributor)}</span> · #${soEsc(it.item_number || '')}${base ? ` · cost $${Number(base).toFixed(2)}` : ''}${retail ? ` · retail ~$${retail.toFixed(2)}` : ''}</div>
+    </div>`;
+  }).join('');
+  dd.style.display = 'block';
+}
+
+function soPickItem(i) {
+  const it = _soSuggestions[i];
+  if (!it) return;
+  soApplyPick(it);
+}
+
+function soApplyPick(it) {
+  _soPicked = it;
+  const inp = document.getElementById('so-product');
+  if (inp) inp.value = it.description;
+  const dd = document.getElementById('so-typeahead');
+  if (dd) dd.style.display = 'none';
+  const vSel = document.getElementById('so-vendor');
+  if (vSel && [...vSel.options].some(o => o.value === it.distributor)) { vSel.value = it.distributor; soVendorChanged(); }
+  const info = document.getElementById('so-pick-info');
+  if (info) {
+    const base = it.each_cost || it.cost;
+    const retail = soSuggestRetail(it);
+    const unitLabel = it.each_cost ? 'each' : ((it.unit || '').trim().toLowerCase() || 'unit');
+    const pct = soMarkups()[it.category] !== undefined ? soMarkups()[it.category] : 50;
+    info.innerHTML = `📦 <strong>${soEsc(it.brand || '')}</strong> · Item #${soEsc(it.item_number || '')} · Cost $${base ? Number(base).toFixed(2) : '—'}/${unitLabel}${(it.case_qty > 1 && it.cost && it.each_cost) ? ` · case of ${it.case_qty}: $${Number(it.cost).toFixed(2)}` : ''}${retail ? ` · <strong style="color:var(--dark);">Suggested retail $${retail.toFixed(2)}</strong> <span style="color:#bbb;">(${pct}% · ${SO_CAT_LABELS[it.category] || it.category})</span>` : ''}`;
+  }
+}
+
+// ── Catalog page ──
+let catState = { term: '', dist: '', cat: '', page: 0, total: 0, rows: [] };
+let _catTimer = null;
+
+function renderCatalog() {
+  const el = document.getElementById('page-catalog');
+  if (!el) return;
+  const dists = ['Phillips', 'Newco', 'VSI', 'Bar ALE'];
+  el.innerHTML = `
+    <div class="card">
+      <div class="card-title">Vendor Catalog</div>
+      <div class="card-sub">Everything we can special order — search by product, brand, or item #. Prices shown are our cost and suggested retail.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+        <input class="form-input" id="cat-search" placeholder="Search 10,000+ items…" style="flex:1;min-width:200px;" value="${soEsc(catState.term)}" oninput="catInput()">
+        <select class="form-select" id="cat-dist" style="width:auto;" onchange="catFilter()">
+          <option value="">All distributors</option>
+          ${dists.map(d => `<option value="${d}" ${catState.dist === d ? 'selected' : ''}>${d}</option>`).join('')}
+        </select>
+        <select class="form-select" id="cat-cat" style="width:auto;" onchange="catFilter()">
+          <option value="">All categories</option>
+          ${Object.entries(SO_CAT_LABELS).map(([k, v]) => `<option value="${k}" ${catState.cat === k ? 'selected' : ''}>${v}</option>`).join('')}
+        </select>
+      </div>
+      <div id="cat-results"><div style="text-align:center;padding:30px;color:#bbb;font-size:13px;">Loading…</div></div>
+      <div id="cat-pager" style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;"></div>
+    </div>`;
+  loadCatalogResults();
+}
+
+function catInput() {
+  clearTimeout(_catTimer);
+  _catTimer = setTimeout(() => { catState.term = document.getElementById('cat-search').value; catState.page = 0; loadCatalogResults(); }, 300);
+}
+function catFilter() {
+  catState.dist = document.getElementById('cat-dist').value;
+  catState.cat = document.getElementById('cat-cat').value;
+  catState.page = 0;
+  loadCatalogResults();
+}
+function catGoPage(p) { catState.page = p; loadCatalogResults(); }
+
+async function loadCatalogResults() {
+  const PAGE = 50;
+  const res = await soCatalogQuery(catState.term, catState.dist, catState.cat, PAGE, catState.page * PAGE);
+  catState.rows = res.rows; catState.total = res.count;
+  const el = document.getElementById('cat-results');
+  const pager = document.getElementById('cat-pager');
+  if (!el) return;
+  if (!res.rows.length) {
+    el.innerHTML = '<div style="text-align:center;padding:30px;color:#bbb;font-size:13px;">No items found. The catalog has Phillips loaded — Newco and others coming as we get their exports.</div>';
+    if (pager) pager.innerHTML = '';
+    return;
+  }
+  el.innerHTML = res.rows.map((it, i) => {
+    const base = it.each_cost || it.cost;
+    const retail = soSuggestRetail(it);
+    return `
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;">
+      <div style="flex:1;min-width:200px;">
+        <div style="font-size:13px;font-weight:500;">${soEsc(it.description)}</div>
+        <div style="font-size:11px;color:#999;">${soEsc(it.brand || '')} · <span style="color:var(--gold);font-weight:600;">${soEsc(it.distributor)}</span> · #${soEsc(it.item_number || '')} · ${SO_CAT_LABELS[it.category] || 'General'}${it.case_qty > 1 ? ` · case of ${it.case_qty}` : ''}</div>
+      </div>
+      <div style="text-align:right;font-size:12px;min-width:130px;">
+        <div>Cost: <strong>$${base ? Number(base).toFixed(2) : '—'}</strong>${it.each_cost ? '/ea' : ''}</div>
+        ${retail ? `<div style="color:var(--dark);">Retail: <strong>$${retail.toFixed(2)}</strong></div>` : ''}
+      </div>
+      <button class="btn btn-sm btn-primary" onclick="soOrderFromCatalog(${i})">Special Order →</button>
+    </div>`;
+  }).join('');
+  if (pager) {
+    const PAGE_CT = Math.ceil(catState.total / PAGE);
+    pager.innerHTML = `
+      <div style="font-size:12px;color:#999;">${catState.total.toLocaleString()} items · page ${catState.page + 1} of ${PAGE_CT}</div>
+      <div style="display:flex;gap:6px;">
+        ${catState.page > 0 ? `<button class="btn btn-sm btn-outline" onclick="catGoPage(${catState.page - 1})">← Prev</button>` : ''}
+        ${catState.page + 1 < PAGE_CT ? `<button class="btn btn-sm btn-outline" onclick="catGoPage(${catState.page + 1})">Next →</button>` : ''}
+      </div>`;
+  }
+}
+
+function soOrderFromCatalog(i) {
+  const it = catState.rows[i];
+  if (!it) return;
+  _soPendingPick = it;
+  showPage('special-orders');
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === 'special-orders'));
+}
+
+// ── Markup settings (manager) ──
+async function soSaveMarkups() {
+  const m = {};
+  Object.keys(SO_CAT_LABELS).forEach(k => {
+    const inp = document.getElementById('so-mk-' + k);
+    const v = inp ? parseFloat(inp.value) : NaN;
+    m[k] = isNaN(v) ? SO_DEFAULT_MARKUPS[k] : v;
+  });
+  if (!_cache.soSettings) _cache.soSettings = {};
+  _cache.soSettings['markups'] = m;
+  await saveSoSettings('markups', m);
+  alert('Markups saved. Suggested retail prices update immediately.');
+  renderSpecialOrders();
 }
 
 // Init users on first load (done in launchApp after Supabase load)
