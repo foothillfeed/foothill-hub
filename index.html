@@ -6795,8 +6795,8 @@ function renderSpecialOrders() {
 // ══════════════════════════════════════════
 // VENDOR CATALOG — typeahead, catalog page, markups
 // ══════════════════════════════════════════
-const SO_DEFAULT_MARKUPS = { dog_food:40, cat_food:40, treats:60, supplements:55, toys:60, gear:60, litter:35, beds:50, grooming:55, small_pet:50, bird:50, reptile:50, fish:50, general:50 };
-const SO_CAT_LABELS = { dog_food:'Dog Food', cat_food:'Cat Food', treats:'Treats & Chews', supplements:'Supplements', toys:'Toys', gear:'Gear & Crates', litter:'Litter', beds:'Beds', grooming:'Grooming', small_pet:'Small Pet', bird:'Bird', reptile:'Reptile', fish:'Fish', general:'General' };
+const SO_DEFAULT_MARKUPS = { dog_food:40, cat_food:40, treats:60, supplements:55, toys:60, gear:60, litter:35, beds:50, grooming:55, small_pet:50, bird:50, reptile:50, fish:50, farm_feed:30, horse:30, poultry:35, general:50 };
+const SO_CAT_LABELS = { dog_food:'Dog Food', cat_food:'Cat Food', treats:'Treats & Chews', supplements:'Supplements', toys:'Toys', gear:'Gear & Crates', litter:'Litter', beds:'Beds', grooming:'Grooming', small_pet:'Small Pet', bird:'Bird', reptile:'Reptile', fish:'Fish', farm_feed:'Farm & Livestock', horse:'Horse & Stable', poultry:'Poultry', general:'General' };
 
 function soMarkups() { return Object.assign({}, SO_DEFAULT_MARKUPS, (_cache.soSettings || {})['markups'] || {}); }
 
