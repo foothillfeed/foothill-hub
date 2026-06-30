@@ -3596,8 +3596,9 @@ async function addRecurring() {
     days = Array.from(document.querySelectorAll('#rec-days-wrap input:checked')).map(cb => parseInt(cb.value));
     if (days.length === 0) { alert('Please select at least one day.'); return; }
   }
+  const assignee = document.getElementById('rec-assignee').value;
   if (!_cache.recurring) _cache.recurring = [];
-  const rec = { id: Date.now()+'', text: taskText, priority, freq, days, assignee, createdBy: currentUser.name, active: true };
+  const rec = { id: Date.now()+'', text, priority, freq, days, assignee, createdBy: currentUser.name, active: true };
   _cache.recurring.push(rec);
   await saveRecurring(rec);
   document.getElementById('rec-text').value = '';
