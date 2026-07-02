@@ -2790,31 +2790,133 @@ function appendUserMsg(text) {
   area.scrollTop = area.scrollHeight;
 }
 
+let _advCardSeq = 0;
 function appendAIMsg(parsed) {
   const area = document.getElementById('chat-area');
   const d = document.createElement('div');
   d.className = 'msg ai';
   let inner = `<div class="msg-avatar ai">F</div><div class="msg-bubble ai">`;
   inner += `<div>${(parsed.answer||'').replace(/\n/g,'<br>')}</div>`;
+  const _lookups = [];
   if (parsed.products && parsed.products.length > 0) {
     inner += `<div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#aaa;margin:12px 0 8px;">Recommended</div>`;
     inner += `<div class="prod-grid">`;
     parsed.products.forEach(p => {
+      const bid = 'advstock-' + (++_advCardSeq);
+      _lookups.push({ id: bid, p: p });
       inner += `<div class="prod-card">
         <div class="prod-img">${p.brand||'Product'}</div>
         <div class="prod-body">
           <div class="prod-name">${p.name||''}</div>
           <div class="prod-why">${p.why||''}</div>
           <div class="prod-tip">💬 "${p.sellTip||''}"</div>
+          <div id="${bid}" style="margin-top:6px;font-size:11px;color:#aaa;">checking stock…</div>
         </div>
       </div>`;
     });
     inner += `</div>`;
   }
+  let _orderBoxId = null;
+  if (parsed.orderSearch) {
+    _orderBoxId = 'advorder-' + (++_advCardSeq);
+    inner += `<div id="${_orderBoxId}"></div>`;
+  }
   inner += `</div>`;
   d.innerHTML = inner;
   area.appendChild(d);
   area.scrollTop = area.scrollHeight;
+  _lookups.forEach(l => advisorStockBadge(l.id, l.p));
+  if (_orderBoxId) advisorOrderSearch(_orderBoxId, parsed.orderSearch);
+}
+
+// ── ADVISOR LIVE STOCK (ff_store_items + ff_vendor_catalog) ──
+function advTokens(str) {
+  return (str||'').toUpperCase().replace(/[^A-Z0-9 ]/g,' ').split(/\s+/)
+    .filter(t => t.length >= 3 && ['THE','AND','WITH','FOR'].indexOf(t) === -1);
+}
+
+async function advQueryStore(tokens) {
+  if (!tokens.length) return [];
+  try {
+    let q = sb.from('ff_store_items')
+      .select('description,size,qty_on_hand,units_sold_24mo,distributors')
+      .order('units_sold_24mo', { ascending: false }).limit(3);
+    tokens.slice(0,4).forEach(t => { q = q.ilike('description', '%' + t + '%'); });
+    const { data, error } = await q;
+    return error ? [] : (data || []);
+  } catch(e) { return []; }
+}
+
+async function advisorFindStock(p) {
+  const full = advTokens((p.brand||'') + ' ' + (p.name||''));
+  const nameToks = advTokens(p.name);
+  let rows = await advQueryStore(full);            // brand + name (most specific)
+  if (!rows.length) rows = await advQueryStore(nameToks);           // name only
+  if (!rows.length && nameToks.length > 2) rows = await advQueryStore(nameToks.slice(0,2)); // relaxed
+  return rows.length ? rows[0] : null;
+}
+
+function advVendorNote(dists) {
+  const names = Array.isArray(dists) ? dists : (dists ? [dists] : []);
+  for (let i = 0; i < names.length; i++) {
+    const cfg = soVendorCfg(names[i]);
+    if (cfg && cfg.day !== null && cfg.day !== undefined) {
+      return names[i] + ' — order ' + (cfg.cutoff||'') + ' ' + SO_DAYS[cfg.day].slice(0,3) + ', deadline ' + soFmtDate(soNextDeadline(cfg));
+    }
+  }
+  return names.length ? names[0] : null;
+}
+
+async function advisorStockBadge(elId, p) {
+  try {
+    const row = await advisorFindStock(p);
+    const e = document.getElementById(elId);
+    if (!e) return;
+    if (!row) { e.innerHTML = '<span style="color:#aaa;">not found in system — check shelf</span>'; return; }
+    const qty = row.qty_on_hand;
+    if (qty === null || qty === undefined) {
+      e.innerHTML = '<span style="color:#c88a2a;">◐ stock unknown — check shelf</span>';
+    } else if (qty > 0) {
+      e.innerHTML = '<span style="color:#27ae60;font-weight:600;">● ' + Math.round(qty) + ' on hand</span>';
+    } else {
+      const vn = advVendorNote(row.distributors);
+      e.innerHTML = '<span style="color:#e07060;font-weight:600;">○ system shows 0 — verify shelf</span>' +
+        (vn ? '<br><span style="color:#888;">special order: ' + soEsc(vn) + '</span>' : '');
+    }
+  } catch(err) {
+    const e = document.getElementById(elId);
+    if (e) e.textContent = '';
+  }
+}
+
+async function advisorOrderSearch(boxId, terms) {
+  const toks = advTokens(terms).slice(0,3);
+  if (!toks.length) return;
+  try {
+    let q = sb.from('ff_vendor_catalog').select('brand,description,distributor,in_store').limit(4);
+    toks.forEach(t => { q = q.ilike('description', '%' + t + '%'); });
+    let res = await q;
+    let data = res.data;
+    if ((!data || !data.length) && toks.length > 1) {
+      res = await sb.from('ff_vendor_catalog').select('brand,description,distributor,in_store')
+        .ilike('description', '%' + toks[0] + '%').limit(4);
+      data = res.data;
+    }
+    const box = document.getElementById(boxId);
+    if (!box) return;
+    if (!data || !data.length) {
+      box.innerHTML = '<div style="margin-top:10px;color:#888;font-size:12px;">Not found in distributor catalogs — check with a manager before telling the customer no.</div>';
+      return;
+    }
+    let h = '<div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#aaa;margin:12px 0 8px;">Special Order Options</div>';
+    data.forEach(r => {
+      const vn = advVendorNote([r.distributor]);
+      h += '<div style="border:1px solid #eee;border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12px;">' +
+        '<b>' + soEsc(r.brand||'') + '</b> ' + soEsc(r.description||'') + '<br>' +
+        '<span style="color:#888;">' + (r.in_store ? '✔ we may already stock this — check shelf · ' : '') + 'via ' + soEsc(vn || r.distributor) + '</span></div>';
+    });
+    box.innerHTML = h;
+  } catch(err) {}
 }
 
 function showTyping() {
@@ -2931,7 +3033,8 @@ INVENTORY: ${INVENTORY_DATA}
 Recommend only products we carry. Be practical and conversational. Max 3 product recommendations.
 ALWAYS respond with valid JSON only:
 {"answer":"text with \\n for line breaks","products":[{"name":"exact product name","brand":"brand only","why":"one sentence","sellTip":"what to say to customer"}]}
-products array is empty [] for general questions. CATEGORY FILTER: {{CAT}}`;
+products array is empty [] for general questions.
+If the customer wants a specific product or brand that is NOT in our inventory above, also add "orderSearch":"2-4 word search phrase" to the JSON — the system will check our special-order catalogs (25,000+ items across six distributors). NEVER say we can't get something; say we may be able to special order it and let the system check. CATEGORY FILTER: {{CAT}}`;
 
 async function sendChat() {
   const input = document.getElementById('chat-input');
