@@ -1071,7 +1071,7 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
       <!-- MANAGE STAFF -->
       <div class="card">
         <div class="card-title">Manage Staff</div>
-        <div class="card-sub">Add new employees or deactivate departed ones. Deactivating removes them from login, schedules, and training — but keeps all their timesheet and report history.</div>
+        <div class="card-sub">Add new employees, change their role, or deactivate departed ones. Deactivating removes them from login, schedules, and training — but keeps all their timesheet and report history.</div>
         <div id="staff-mgmt-list"></div>
         <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px;">
           <div style="font-weight:500;margin-bottom:10px;">Add New Employee</div>
@@ -2379,11 +2379,21 @@ function renderStaffMgmt() {
         <span class="badge badge-${u.role}" style="margin-left:8px;">${u.role}</span>
         ${inactive ? '<span style="font-size:12px;color:#999;margin-left:8px;">inactive</span>' : ''}
       </div>
-      ${isSelf ? '<span style="font-size:12px;color:#999;">you</span>' :
+      ${isSelf ? `<select class="form-select" style="width:auto;font-size:12px;padding:4px 6px;" onchange="changeEmployeeRole('${id}', this.value)">
+            <option value="manager"${u.role==='manager'?' selected':''}>manager</option>
+            <option value="lead"${u.role==='lead'?' selected':''}>lead</option>
+            <option value="staff"${u.role==='staff'?' selected':''}>staff</option>
+          </select>
+          <span style="font-size:12px;color:#999;">you</span>` :
         inactive
           ? `<button class="btn btn-sm btn-outline" onclick="reactivateEmployee('${id}')">Reactivate</button>
              <button class="btn btn-sm" style="color:#e07060;background:none;border:1px solid #e07060;" onclick="deleteEmployee('${id}')">Delete</button>`
-          : `<button class="btn btn-sm btn-outline" onclick="deactivateEmployee('${id}')">Deactivate</button>`
+          : `<select class="form-select" style="width:auto;font-size:12px;padding:4px 6px;" onchange="changeEmployeeRole('${id}', this.value)">
+               <option value="manager"${u.role==='manager'?' selected':''}>manager</option>
+               <option value="lead"${u.role==='lead'?' selected':''}>lead</option>
+               <option value="staff"${u.role==='staff'?' selected':''}>staff</option>
+             </select>
+             <button class="btn btn-sm btn-outline" onclick="deactivateEmployee('${id}')">Deactivate</button>`
       }
     </div>`;
   }).join('');
@@ -2433,6 +2443,23 @@ async function deactivateEmployee(uid) {
   u.active = false;
   if (_cache.users) delete _cache.users[uid];
   staffMsg(`${u.name} deactivated.`, true);
+  renderStaffMgmt();
+  populateEmpDropdowns();
+  populateLoginDropdown();
+}
+
+async function changeEmployeeRole(uid, newRole) {
+  const u = (_cache.allUsers||{})[uid];
+  if (!u || u.role === newRole) return;
+  const oldRole = u.role;
+  if (!confirm(`Change ${u.name}'s role from ${oldRole} to ${newRole}?`)) { renderStaffMgmt(); return; }
+  const newColor = ROLE_COLORS[newRole] || u.color;
+  await sbUpdate('ff_users', 'uid', uid, { role: newRole, color: newColor });
+  u.role = newRole;
+  u.color = newColor;
+  if (_cache.users && _cache.users[uid]) { _cache.users[uid].role = newRole; _cache.users[uid].color = newColor; }
+  if (currentUser && currentUser.id === uid) { currentUser.role = newRole; buildNav(); }
+  staffMsg(`${u.name} is now ${newRole}.`, true);
   renderStaffMgmt();
   populateEmpDropdowns();
   populateLoginDropdown();
