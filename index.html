@@ -7709,8 +7709,8 @@ function renderSpecialOrders() {
       <button class="btn btn-primary" style="margin-top:14px;" onclick="soSaveVendorSettings()">Save Deadlines</button>
     </div>
     <div class="card">
-      <div class="card-title">Markup % by Category</div>
-      <div class="card-sub">Manager only — sets the suggested retail price shown when staff quote a special order (retail = cost + markup)</div>
+      <div class="card-title">Margin % by Category</div>
+      <div class="card-sub">Manager only — sets the suggested retail price shown when staff quote a special order (retail = cost ÷ (1 − margin), rounded to .99)</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;">
         ${Object.entries(SO_CAT_LABELS).map(([k, label]) => `
           <div style="display:flex;align-items:center;gap:6px;">
@@ -7728,16 +7728,44 @@ function renderSpecialOrders() {
 // ══════════════════════════════════════════
 // VENDOR CATALOG — typeahead, catalog page, markups
 // ══════════════════════════════════════════
-const SO_DEFAULT_MARKUPS = { dog_food:40, cat_food:40, treats:60, supplements:55, toys:60, gear:60, litter:35, beds:50, grooming:55, small_pet:50, bird:50, reptile:50, fish:50, farm_feed:30, horse:30, poultry:35, general:50 };
-const SO_CAT_LABELS = { dog_food:'Dog Food', cat_food:'Cat Food', treats:'Treats & Chews', supplements:'Supplements', toys:'Toys', gear:'Gear & Crates', litter:'Litter', beds:'Beds', grooming:'Grooming', small_pet:'Small Pet', bird:'Bird', reptile:'Reptile', fish:'Fish', farm_feed:'Farm & Livestock', horse:'Horse & Stable', poultry:'Poultry', general:'General' };
+// Values are MARGIN targets (% of sale price kept), grouped into 4 buckets.
+// soCatBucket() maps every raw catalog category onto one of these keys.
+const SO_DEFAULT_MARKUPS = { farm_feed:30, dog_food:35, hardware:40, general:50 };
+const SO_CAT_LABELS = { farm_feed:'Feed / Grain / Livestock', dog_food:'Food / Bird / Small Pet / Supplements', hardware:'Behlen Hardware (Tanks / Gates / Panels)', general:'General (Toys / Treats / Gear / Everything Else)' };
 
 function soMarkups() { return Object.assign({}, SO_DEFAULT_MARKUPS, (_cache.soSettings || {})['markups'] || {}); }
+
+// Maps any raw catalog category value to one of the configured margin buckets.
+// Catalog categories are inconsistent (underscores, hyphens, Title Case), so we
+// normalize here rather than requiring every variant in the settings UI.
+function soCatBucket(cat) {
+  const c = (cat || '').trim().toLowerCase();
+  // 30% — feed / grain / livestock
+  const feed = ['farm_feed','horse','poultry','poultry feed','goat feed','beef cattle feed',
+    'rolled grain','alfalfa products','sheep feed','swine feeds','swine show feed','swine barrel',
+    'grains','gamebird feed','turkey feed','ratite feed','processed grain','horse feed',
+    'equus nutrition system','milk replacers','dairy and general livestock feed','organic'];
+  // 35% — dog/cat food, bird/small pet/fish/reptile, supplements & show
+  const food = ['dog_food','cat_food','dog-food','cat-food','bird','small_pet','fish','reptile',
+    'supplements','health','show supplements','essential show feeds','show feeds',
+    'blocks / tubs / minerals','sweetlix medicated blocks','bovalyx tubs','stand alone'];
+  // 40% — Behlen hardware
+  const hardware = ['stock tanks','gates','wire panels','corral panels & bow gates'];
+  if (feed.includes(c)) return 'farm_feed';
+  if (food.includes(c)) return 'dog_food';
+  if (hardware.includes(c)) return 'hardware';
+  return 'general';
+}
 
 function soSuggestRetail(item) {
   const base = item.each_cost || item.cost;
   if (!base) return null;
-  const pct = soMarkups()[item.category] !== undefined ? soMarkups()[item.category] : 50;
-  const raw = base * (1 + pct / 100);
+  const bucket = soCatBucket(item.category);
+  const m = soMarkups();
+  const pct = m[bucket] !== undefined ? m[bucket] : 50;
+  // pct is a MARGIN target: retail = cost / (1 - margin), then round up to .99
+  const frac = Math.min(Math.max(pct / 100, 0), 0.95);
+  const raw = base / (1 - frac);
   return Math.ceil(raw + 0.01) - 0.01;
 }
 
@@ -7913,7 +7941,7 @@ async function soSaveMarkups() {
   if (!_cache.soSettings) _cache.soSettings = {};
   _cache.soSettings['markups'] = m;
   await saveSoSettings('markups', m);
-  alert('Markups saved. Suggested retail prices update immediately.');
+  alert('Margins saved. Suggested retail prices update immediately.');
   renderSpecialOrders();
 }
 
