@@ -6244,6 +6244,14 @@ async function approveTimeoff(id, approve) {
   renderSchedule();
 }
 
+async function deleteTimeoff(id) {
+  if (!confirm('Delete this time off request?')) return;
+  _cache.timeoffs = (_cache.timeoffs || []).filter(r => r.id !== id);
+  await sbDelete('ff_timeoffs', 'off_id', id);
+  renderTimeoff();
+  renderSchedule();
+}
+
 function renderTimeoff() {
   const timeoffs = (_cache.timeoffs || []).slice().reverse();
   const isManager = currentUser.role === 'manager';
@@ -6273,17 +6281,19 @@ function renderTimeoff() {
   el.innerHTML = mine.map(r => {
     const dateRange = r.start === r.end ? r.start : `${r.start} – ${r.end}`;
     const approveButtons = isManager && r.status === 'pending' ? `
-      <div class="btn-row" style="margin-top:10px;">
         <button class="btn btn-sm" style="background:#2e7d32;color:white;" onclick="approveTimeoff('${r.id}',true)">Approve</button>
-        <button class="btn btn-sm btn-danger" onclick="approveTimeoff('${r.id}',false)">Deny</button>
-      </div>` : '';
+        <button class="btn btn-sm btn-danger" onclick="approveTimeoff('${r.id}',false)">Deny</button>` : '';
+    // Managers can delete approved requests; employees can delete any of their own requests.
+    const canDelete = (isManager && r.status === 'approved') || (!isManager && r.uid === currentUser.id);
+    const deleteButton = canDelete ? `<button class="btn btn-sm btn-danger" onclick="deleteTimeoff('${r.id}')">Delete</button>` : '';
+    const btnRow = (approveButtons || deleteButton) ? `<div class="btn-row" style="margin-top:10px;">${approveButtons}${deleteButton}</div>` : '';
     return `<div class="timeoff-card">
       <div class="timeoff-header">
         <div><strong>${r.name}</strong> · ${dateRange}</div>
         <span class="timeoff-status status-${r.status}">${r.status.charAt(0).toUpperCase()+r.status.slice(1)}</span>
       </div>
       ${r.reason ? `<div style="font-size:13px;color:#666;">${r.reason}</div>` : ''}
-      ${approveButtons}
+      ${btnRow}
     </div>`;
   }).join('');
 }
