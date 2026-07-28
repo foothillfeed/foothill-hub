@@ -1379,6 +1379,7 @@ async function sbDelete(table, pkCol, pkVal) {
 
 // ── Local cache (fast UI, synced to Supabase) ──
 let _cache = {};
+let pinResetUid = null; // uid of employee currently showing the inline "reset PIN" form in Manage Staff
 function getCache() { return _cache; }
 function setCache(key, val) { _cache[key] = val; }
 
@@ -2372,6 +2373,12 @@ function renderStaffMgmt() {
     const u = all[id];
     const inactive = u.active === false;
     const isSelf = currentUser && currentUser.id === id;
+    const showingPinForm = pinResetUid === id;
+    const pinRow = showingPinForm ? `<div style="display:flex;align-items:center;gap:10px;padding:9px 0 4px 40px;border-bottom:1px solid var(--border);${inactive?'opacity:0.5;':''}">
+        <input class="form-input" id="pin-reset-input-${id}" type="password" placeholder="New 4-digit PIN" maxlength="4" inputmode="numeric" style="width:140px;">
+        <button class="btn btn-primary btn-sm" onclick="savePinReset('${id}')">Save PIN</button>
+        <button class="btn btn-sm btn-outline" onclick="cancelPinReset()">Cancel</button>
+      </div>` : '';
     return `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);${inactive?'opacity:0.5;':''}">
       <div style="width:30px;height:30px;border-radius:50%;background:${u.color||'#6B7C5C'};color:white;display:flex;align-items:center;justify-content:center;font-weight:500;flex-shrink:0;">${u.name[0]}</div>
       <div style="flex:1;min-width:0;">
@@ -2393,10 +2400,44 @@ function renderStaffMgmt() {
                <option value="lead"${u.role==='lead'?' selected':''}>lead</option>
                <option value="staff"${u.role==='staff'?' selected':''}>staff</option>
              </select>
+             <button class="btn btn-sm btn-outline" onclick="startPinReset('${id}')">Reset PIN</button>
              <button class="btn btn-sm btn-outline" onclick="deactivateEmployee('${id}')">Deactivate</button>`
       }
-    </div>`;
+    </div>${pinRow}`;
   }).join('');
+}
+
+function startPinReset(uid) {
+  pinResetUid = uid;
+  renderStaffMgmt();
+  const input = document.getElementById('pin-reset-input-' + uid);
+  if (input) input.focus();
+}
+
+function cancelPinReset() {
+  pinResetUid = null;
+  renderStaffMgmt();
+}
+
+async function savePinReset(uid) {
+  const u = (_cache.allUsers||{})[uid];
+  if (!u) return;
+  const input = document.getElementById('pin-reset-input-' + uid);
+  const pin = (input ? input.value : '').trim();
+  if (!/^\d{4}$/.test(pin)) { staffMsg('PIN must be exactly 4 digits.'); return; }
+
+  // Block duplicate PINs among active staff (PIN is the only credential)
+  const all = _cache.allUsers || {};
+  const dupPin = Object.entries(all).find(([id,o]) => id !== uid && o.active !== false && o.pin === pin);
+  if (dupPin) { staffMsg(`That PIN is already used by ${dupPin[1].name}. Pick a different one.`); return; }
+
+  staffMsg('Saving…', true);
+  await saveUserPin(uid, pin);
+  u.pin = pin;
+  if (_cache.users && _cache.users[uid]) _cache.users[uid].pin = pin;
+  pinResetUid = null;
+  staffMsg(`${u.name}'s PIN has been reset.`, true);
+  renderStaffMgmt();
 }
 
 async function addEmployee() {
