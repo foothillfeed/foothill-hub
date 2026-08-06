@@ -4235,6 +4235,19 @@ function getCurrentMonthKey() {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
 }
 
+function monthKeyToLabel(monthKey) {
+  const [y,m] = monthKey.split('-').map(Number);
+  return new Date(y, m-1, 1).toLocaleDateString('en-US',{month:'long',year:'numeric'});
+}
+
+function toggleSelfReviewHistoryItem(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  const caret = document.getElementById(id + '-caret');
+  if (caret) caret.textContent = el.style.display === 'none' ? '▸' : '▾';
+}
+
 function getSelfReview(uid, monthKey) {
   // _cache in use
   return (((_cache.selfReviews||{}) || {})[uid] || {})[monthKey] || null;
@@ -4392,6 +4405,11 @@ function buildReviewDetail(uid) {
   // Self review
   const selfReview = (((_cache.selfReviews||{})||{})[uid]||{})[monthKey];
 
+  // Past self reviews (all months except current, most recent first)
+  const pastSelfReviews = Object.entries((_cache.selfReviews||{})[uid] || {})
+    .filter(([mk]) => mk !== monthKey)
+    .sort((a,b) => b[0].localeCompare(a[0]));
+
   // Past reviews
   const pastReviews = ((_cache.reviews||{})[uid]||[]).slice().reverse().slice(0,3);
 
@@ -4446,6 +4464,29 @@ function buildReviewDetail(uid) {
     <div class="card" style="margin-bottom:14px;background:#fafaf8;">
       <div style="color:#bbb;font-size:13px;text-align:center;padding:12px;">No self review submitted for ${monthLabel} yet.</div>
     </div>`}
+
+    ${pastSelfReviews.length > 0 ? `
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-title">Self Review History</div>
+      <div class="card-sub">${u.name}'s prior monthly self reviews</div>
+      ${pastSelfReviews.map(([mk, r], i) => {
+        const itemId = `srh-${uid}-${mk}`;
+        return `
+        <div class="review-history-item" style="cursor:pointer;" onclick="toggleSelfReviewHistoryItem('${itemId}')">
+          <div class="review-month-label" style="display:flex;justify-content:space-between;align-items:center;">
+            <span>${monthKeyToLabel(mk)} · Submitted ${new Date(r.submittedAt).toLocaleDateString()}</span>
+            <span id="${itemId}-caret" style="color:#999;">▸</span>
+          </div>
+          <div id="${itemId}" style="display:none;margin-top:10px;" onclick="event.stopPropagation()">
+            ${SELF_REVIEW_QUESTIONS.map(q=>`
+              <div style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border);">
+                <div style="font-size:12px;color:#999;margin-bottom:4px;">${q.label}</div>
+                <div style="font-size:13px;color:var(--dark);">${r.answers[q.id] || '–'}</div>
+              </div>`).join('')}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>` : ''}
 
     <div class="card" style="margin-bottom:14px;">
       <div class="card-title">Your Review Notes — ${monthLabel}</div>
