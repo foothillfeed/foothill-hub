@@ -568,16 +568,23 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
     <div class="page" id="page-messages">
       <div class="card">
         <div class="card-title">New Message</div>
-        <div class="card-sub">Post to the whole team or send to one person. Use the phone button to log a customer call so it doesn't get lost.</div>
+        <div class="card-sub">Post to the whole team, one person, or a custom group. Use the phone button to log a customer call so it doesn't get lost.</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
-          <select class="form-select" id="msg-to" style="width:auto;">
-            <option value="">👥 Whole Team</option>
-          </select>
+          <div id="msg-to-wrap" style="position:relative;">
+            <button type="button" class="btn btn-sm btn-outline" id="msg-to-btn" onclick="toggleMsgToPanel()">👥 Whole Team ▾</button>
+            <div id="msg-to-panel" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:white;border:1px solid var(--border);border-radius:10px;padding:10px;box-shadow:0 4px 14px rgba(0,0,0,0.12);z-index:50;min-width:220px;max-height:260px;overflow-y:auto;">
+              <label style="display:flex;align-items:center;gap:8px;font-size:14px;padding:6px 4px;cursor:pointer;border-bottom:1px solid var(--border);margin-bottom:6px;">
+                <input type="checkbox" id="msg-to-everyone" onchange="onMsgToEveryoneChange()"> 👥 Whole Team
+              </label>
+              <div id="msg-to-checklist"></div>
+            </div>
+          </div>
           <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;">
             <input type="checkbox" id="msg-urgent"> 🚨 Urgent (pop-up at login)
           </label>
           <button class="btn btn-sm btn-outline" onclick="insertPhoneTemplate()">📞 Phone Message</button>
         </div>
+        <div id="msg-reply-preview" style="display:none;"></div>
         <textarea class="form-input" id="msg-body" rows="3" placeholder="Type your message…" style="width:100%;resize:vertical;"></textarea>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;">
           <div id="msg-send-status" style="font-size:13px;min-height:18px;"></div>
@@ -2554,12 +2561,22 @@ function populateEmpDropdowns() {
 // MESSAGES (team board + direct messages)
 // ══════════════════════════════════════════
 // Refetch messages from Supabase so new messages appear without re-login
+// Recipient multi-select + reply state
+let msgToEveryone = true;
+let selectedRecipients = new Set();
+let replyingTo = null;
+
 async function refreshMessages() {
   try {
     const rows = await sbGet('ff_messages');
-    _cache.messages = (rows || []).map(m => ({ id:m.msg_id, fromUid:m.from_uid, fromName:m.from_name, toUid:m.to_uid||'', body:m.body, urgent:!!m.urgent, readBy:m.read_by||[], archived:!!m.archived, createdAt:m.created_at }));
+    _cache.messages = (rows || []).map(m => ({ id:m.msg_id, fromUid:m.from_uid, fromName:m.from_name, toUid:m.to_uid||'', body:m.body, urgent:!!m.urgent, readBy:m.read_by||[], archived:!!m.archived, createdAt:m.created_at, replyTo:m.reply_to||null }));
   } catch(e) { console.error('refreshMessages failed', e); }
 }
+
+// A message's to_uid is '' (everyone), or a comma-separated list of uids
+function toUidList(m) { return m.toUid ? String(m.toUid).split(',').filter(Boolean) : []; }
+function isMessageRecipient(m, uid) { return m.toUid === '' || toUidList(m).includes(uid); }
+function recipientNames(m) { const users = getUsers(); return toUidList(m).map(id => users[id]?.name || id); }
 
 function timeAgoMsg(iso) {
   if (!iso) return '';
@@ -2573,10 +2590,10 @@ function timeAgoMsg(iso) {
   return new Date(iso).toLocaleDateString('en-US', {month:'short', day:'numeric'});
 }
 
-// Messages I can see: not archived, and addressed to everyone, to me, or sent by me
+// Messages I can see: not archived, and addressed to everyone, to me (alone or in a group), or sent by me
 function visibleMessages() {
   return (_cache.messages || []).filter(m =>
-    !m.archived && (m.toUid === '' || m.toUid === currentUser.id || m.fromUid === currentUser.id)
+    !m.archived && (isMessageRecipient(m, currentUser.id) || m.fromUid === currentUser.id)
   ).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
 
@@ -2612,17 +2629,89 @@ function goToMessages() {
   document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === 'messages'));
 }
 
+function toggleMsgToPanel() {
+  const p = document.getElementById('msg-to-panel');
+  if (!p) return;
+  const opening = p.style.display === 'none' || !p.style.display;
+  if (opening) renderMsgToChecklist();
+  p.style.display = opening ? 'block' : 'none';
+}
+
+function renderMsgToChecklist() {
+  const wrap = document.getElementById('msg-to-checklist');
+  if (!wrap) return;
+  const users = getUsers();
+  const ids = Object.keys(users).filter(id => id !== currentUser.id).sort((a,b) => users[a].name.localeCompare(users[b].name));
+  wrap.innerHTML = ids.map(id => `
+    <label style="display:flex;align-items:center;gap:8px;font-size:14px;padding:5px 4px;cursor:pointer;">
+      <input type="checkbox" value="${id}" ${selectedRecipients.has(id)?'checked':''} ${msgToEveryone?'disabled':''} onchange="onMsgRecipientToggle('${id}', this.checked)">
+      ${users[id].name}
+    </label>`).join('');
+  const everyoneBox = document.getElementById('msg-to-everyone');
+  if (everyoneBox) everyoneBox.checked = msgToEveryone;
+  updateMsgToButtonLabel();
+}
+
+function onMsgToEveryoneChange() {
+  msgToEveryone = document.getElementById('msg-to-everyone').checked;
+  if (msgToEveryone) selectedRecipients.clear();
+  renderMsgToChecklist();
+}
+
+function onMsgRecipientToggle(id, checked) {
+  if (checked) selectedRecipients.add(id); else selectedRecipients.delete(id);
+  updateMsgToButtonLabel();
+}
+
+function updateMsgToButtonLabel() {
+  const btn = document.getElementById('msg-to-btn');
+  if (!btn) return;
+  if (msgToEveryone || selectedRecipients.size === 0) { btn.textContent = '👥 Whole Team ▾'; return; }
+  const users = getUsers();
+  const names = [...selectedRecipients].map(id => users[id]?.name || id);
+  btn.textContent = names.length === 1 ? `To: ${names[0]} ▾` : `To: ${names[0]} +${names.length-1} ▾`;
+}
+
+// Close the recipient panel on outside click
+document.addEventListener('click', (e) => {
+  const wrap = document.getElementById('msg-to-wrap');
+  const panel = document.getElementById('msg-to-panel');
+  if (wrap && panel && panel.style.display === 'block' && !wrap.contains(e.target)) panel.style.display = 'none';
+});
+
+function startReply(msgId) {
+  const m = (_cache.messages||[]).find(x => x.id === msgId);
+  if (!m) return;
+  replyingTo = { id: m.id, fromUid: m.fromUid, fromName: m.fromName, body: m.body };
+  msgToEveryone = false;
+  selectedRecipients = new Set([m.fromUid]);
+  updateMsgToButtonLabel();
+  renderReplyPreview();
+  const bodyEl = document.getElementById('msg-body');
+  if (bodyEl) { bodyEl.focus(); bodyEl.scrollIntoView({behavior:'smooth', block:'center'}); }
+}
+
+function cancelReply() {
+  replyingTo = null;
+  renderReplyPreview();
+}
+
+function renderReplyPreview() {
+  const el = document.getElementById('msg-reply-preview');
+  if (!el) return;
+  if (!replyingTo) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = 'block';
+  el.innerHTML = `
+    <div style="background:#f4f4ef;border-left:3px solid var(--sage,#6B7C5C);border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:13px;color:#666;display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">
+      <div>↩ Replying to <strong>${replyingTo.fromName}</strong>: "${escapeMsgHtml(replyingTo.body.slice(0,100))}${replyingTo.body.length>100?'…':''}"</div>
+      <button type="button" onclick="cancelReply()" style="background:none;border:none;color:#999;cursor:pointer;font-size:14px;line-height:1;">✕</button>
+    </div>`;
+}
+
 function renderMessages() {
-  // Recipient dropdown: whole team + each active person except me
-  const sel = document.getElementById('msg-to');
-  if (sel) {
-    const users = getUsers();
-    const ids = Object.keys(users).filter(id => id !== currentUser.id).sort((a,b) => users[a].name.localeCompare(users[b].name));
-    const current = sel.value;
-    sel.innerHTML = '<option value="">👥 Whole Team</option>' +
-      ids.map(id => `<option value="${id}">${users[id].name}</option>`).join('');
-    if (current && (current === '' || users[current])) sel.value = current;
-  }
+  updateMsgToButtonLabel();
+  const panel = document.getElementById('msg-to-panel');
+  if (panel && panel.style.display === 'block') renderMsgToChecklist();
 
   const msgs = visibleMessages();
   const inbox = msgs.filter(m => m.fromUid !== currentUser.id).slice(0, 50);
@@ -2635,17 +2724,24 @@ function renderMessages() {
       inbox.map(m => {
         const unread = !(m.readBy||[]).includes(currentUser.id);
         const sender = getUser(m.fromUid);
+        const recipCount = toUidList(m).length;
+        const toLabel = m.toUid === '' ? 'to everyone' : (recipCount > 1 ? `to you +${recipCount-1} other${recipCount-1===1?'':'s'}` : 'to you');
+        const orig = m.replyTo ? (_cache.messages||[]).find(x => x.id === m.replyTo) : null;
         return `<div style="padding:11px 12px;border-radius:10px;margin-bottom:8px;background:${m.urgent?'#fdecea':unread?'#fef8ec':'#fafaf8'};border:1px solid ${m.urgent?'#e07060':'var(--border)'};">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
             <div style="width:24px;height:24px;border-radius:50%;background:${sender?.color||'#6B7C5C'};color:white;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500;flex-shrink:0;">${m.fromName[0]}</div>
             <span style="font-weight:500;font-size:14px;">${m.fromName}</span>
             ${m.urgent ? '<span style="font-size:11px;background:#e07060;color:white;border-radius:8px;padding:1px 7px;">URGENT</span>' : ''}
-            ${m.toUid === '' ? '<span style="font-size:11px;color:#999;">to everyone</span>' : '<span style="font-size:11px;color:#999;">to you</span>'}
+            <span style="font-size:11px;color:#999;">${toLabel}</span>
             ${unread ? '<span style="width:8px;height:8px;border-radius:50%;background:#C49A3C;display:inline-block;"></span>' : ''}
             <span style="font-size:12px;color:#aaa;margin-left:auto;">${timeAgoMsg(m.createdAt)}</span>
           </div>
+          ${orig ? `<div style="font-size:12px;color:#999;border-left:2px solid var(--border);padding-left:8px;margin-bottom:6px;">↩ ${orig.fromName}: "${escapeMsgHtml(orig.body.slice(0,80))}${orig.body.length>80?'…':''}"</div>` : ''}
           <div style="font-size:14px;white-space:pre-wrap;word-break:break-word;">${escapeMsgHtml(m.body)}</div>
-          ${canArchive(m) ? `<div style="text-align:right;margin-top:4px;"><button class="btn btn-sm" style="background:none;border:none;color:#bbb;cursor:pointer;font-size:12px;" onclick="archiveMessage('${m.id}')">✓ Done / Archive</button></div>` : ''}
+          <div style="display:flex;justify-content:flex-end;gap:14px;margin-top:4px;">
+            <button class="btn btn-sm" style="background:none;border:none;color:#bbb;cursor:pointer;font-size:12px;" onclick="startReply('${m.id}')">↩ Reply</button>
+            ${canArchive(m) ? `<button class="btn btn-sm" style="background:none;border:none;color:#bbb;cursor:pointer;font-size:12px;" onclick="archiveMessage('${m.id}')">✓ Done / Archive</button>` : ''}
+          </div>
         </div>`;
       }).join('');
   }
@@ -2655,13 +2751,16 @@ function renderMessages() {
     sentEl.innerHTML = sent.length === 0 ? '<div style="color:#999;font-size:14px;padding:8px 0;">Nothing sent yet.</div>' :
       sent.map(m => {
         const readers = (m.readBy||[]).filter(id => id !== currentUser.id).map(id => getUser(id)?.name || id);
-        const toName = m.toUid === '' ? 'Everyone' : (getUser(m.toUid)?.name || m.toUid);
+        const names = recipientNames(m);
+        const toName = m.toUid === '' ? 'Everyone' : (names.length <= 2 ? names.join(', ') : `${names[0]} +${names.length-1} others`);
+        const orig = m.replyTo ? (_cache.messages||[]).find(x => x.id === m.replyTo) : null;
         return `<div style="padding:10px 12px;border-radius:10px;margin-bottom:8px;background:#fafaf8;border:1px solid var(--border);">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:13px;color:#888;">
             To: <strong style="color:#555;">${toName}</strong>
             ${m.urgent ? '<span style="font-size:11px;background:#e07060;color:white;border-radius:8px;padding:1px 7px;">URGENT</span>' : ''}
             <span style="margin-left:auto;color:#aaa;font-size:12px;">${timeAgoMsg(m.createdAt)}</span>
           </div>
+          ${orig ? `<div style="font-size:12px;color:#999;border-left:2px solid var(--border);padding-left:8px;margin-bottom:6px;">↩ ${orig.fromName}: "${escapeMsgHtml(orig.body.slice(0,80))}${orig.body.length>80?'…':''}"</div>` : ''}
           <div style="font-size:14px;white-space:pre-wrap;word-break:break-word;">${escapeMsgHtml(m.body)}</div>
           <div style="font-size:12px;color:${readers.length?'#27ae60':'#bbb'};margin-top:5px;">${readers.length ? '✓ Seen by ' + readers.join(', ') : 'Not seen yet'}</div>
           <div style="text-align:right;"><button class="btn btn-sm" style="background:none;border:none;color:#bbb;cursor:pointer;font-size:12px;" onclick="archiveMessage('${m.id}')">Archive</button></div>
@@ -2678,25 +2777,29 @@ function escapeMsgHtml(s) {
 
 async function sendMessage() {
   const body = (document.getElementById('msg-body').value || '').trim();
-  const toUid = document.getElementById('msg-to').value;
+  const toUid = (msgToEveryone || selectedRecipients.size === 0) ? '' : [...selectedRecipients].join(',');
   const urgent = document.getElementById('msg-urgent').checked;
   const status = document.getElementById('msg-send-status');
   if (!body) { status.textContent = 'Type a message first.'; status.style.color = '#e07060'; return; }
 
+  const replyToId = replyingTo ? replyingTo.id : null;
   const msg = {
     msg_id: Date.now() + '_' + currentUser.id,
     from_uid: currentUser.id, from_name: currentUser.name,
     to_uid: toUid, body, urgent,
+    reply_to: replyToId,
     read_by: [], archived: false,
     created_at: new Date().toISOString()
   };
   status.textContent = 'Sending…'; status.style.color = '#888';
   await sbUpsert('ff_messages', msg);
   if (!_cache.messages) _cache.messages = [];
-  _cache.messages.push({ id:msg.msg_id, fromUid:msg.from_uid, fromName:msg.from_name, toUid:msg.to_uid, body:msg.body, urgent:msg.urgent, readBy:[], archived:false, createdAt:msg.created_at });
+  _cache.messages.push({ id:msg.msg_id, fromUid:msg.from_uid, fromName:msg.from_name, toUid:msg.to_uid, body:msg.body, urgent:msg.urgent, readBy:[], archived:false, createdAt:msg.created_at, replyTo:replyToId });
 
   document.getElementById('msg-body').value = '';
   document.getElementById('msg-urgent').checked = false;
+  msgToEveryone = true; selectedRecipients = new Set(); updateMsgToButtonLabel();
+  replyingTo = null; renderReplyPreview();
   status.textContent = 'Sent ✓'; status.style.color = '#27ae60';
   setTimeout(() => { if (status.textContent === 'Sent ✓') status.textContent = ''; }, 3000);
   renderMessages();
@@ -2708,7 +2811,7 @@ function insertPhoneTemplate() {
   // Default phone messages to the manager
   const users = getUsers();
   const mgrId = Object.keys(users).find(id => users[id].role === 'manager' && id !== currentUser.id);
-  if (mgrId) document.getElementById('msg-to').value = mgrId;
+  if (mgrId) { msgToEveryone = false; selectedRecipients = new Set([mgrId]); updateMsgToButtonLabel(); }
   body.focus();
 }
 
