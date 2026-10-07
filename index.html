@@ -7886,11 +7886,44 @@ const SO_DEFAULT_VENDORS = [
   { name:'Bar ALE', day:3, cutoff:'by 11am', freq:'biweekly', anchor:'2026-05-13' },
   { name:'Elk Grove Milling', day:null, cutoff:'', freq:'weekly' },
   { name:'Volkman Pet', day:4, cutoff:'afternoon', freq:'biweekly', anchor:'2026-05-21' },
-  { name:'Associated Feed', day:null, cutoff:'', freq:'weekly' },
+  { name:'Associated Feed', day:2, cutoff:'by close', freq:'weekly' },
   { name:'Farmers Feed', day:1, cutoff:'by 10am', freq:'weekly' },
 ];
 let soTab = 'pending';
 let soExpanded = {};
+
+// Day the vendor's product is ready for the customer (0=Sun..6=Sat).
+// Associated: customer cutoff Tue close -> we order Wed AM -> weekly truck pickup Fri.
+const SO_VENDOR_READY = { 'Associated Feed': 5 };
+// Catalog distributor codes -> vendor names used on special orders
+const SO_DIST_VENDOR = { 'ASSOC':'Associated Feed', 'Farmers Feed':'Farmers Feed', 'Newco':'Newco', 'Bar ALE':'Bar ALE', 'Phillips':'Phillips', 'VSI':'VSI' };
+function soDistLabel(d) { return d === 'ASSOC' ? 'Associated Feed' : (d || ''); }
+// Margin overrides by distributor (Jeff 10/6/2026: 33% across the board on Associated)
+const SO_DEFAULT_DIST_MARGINS = { 'ASSOC': 33 };
+function soDistMargins() { return Object.assign({}, SO_DEFAULT_DIST_MARGINS, (_cache.soSettings || {})['distMargins'] || {}); }
+// Associated ordering rules (Domestic price list, eff. 9/14/2026). Keyed by catalog cat_id.
+const SO_ITEM_FLAGS = {
+  'assoc-300166': { kind:'vfd', text:'Requires a VFD (vet feed directive). Only order if the customer has one from their vet.' },
+  'assoc-300520': { kind:'vfd', text:'Requires a VFD (vet feed directive). Only order if the customer has one from their vet.' },
+  'assoc-500173': { kind:'pallet', text:'Molasses tub: Associated sells these by the full pallet only (12), no pallet discount.' },
+  'assoc-500228': { kind:'pallet', text:'Molasses tub: Associated sells these by the full pallet only (12), no pallet discount.' },
+  'assoc-500218': { kind:'pallet', text:'Molasses tub: Associated sells these by the full pallet only (12), no pallet discount.' },
+  'assoc-500226': { kind:'pallet', text:'Molasses tub: Associated sells these by the full pallet only (12), no pallet discount.' },
+  'assoc-300403': { kind:'barrel', text:'Barrel feed: Associated charges a $35 deposit per barrel. Collect it from the customer.' },
+  'assoc-300402': { kind:'barrel', text:'Barrel feed: Associated charges a $35 deposit per barrel. Collect it from the customer.' },
+  'assoc-300495': { kind:'barrel', text:'Barrel feed: Associated charges a $35 deposit per barrel. Collect it from the customer.' },
+};
+function soItemFlag(catId) { return catId ? (SO_ITEM_FLAGS[catId] || null) : null; }
+function soFlagHTML(f) { return f ? `<div style="background:#fdecea;border:1px solid #e57373;border-radius:6px;padding:6px 10px;margin-top:6px;font-size:12px;color:#b71c1c;">⚠️ ${soEsc(f.text)}</div>` : ''; }
+// Date the customer can expect it, based on the order deadline and the vendor's ready day
+function soReadyDate(vendor, deadline) {
+  const rd = SO_VENDOR_READY[vendor];
+  if (rd === undefined || !deadline) return null;
+  const [y, m, d] = deadline.split('-').map(Number);
+  const dl = new Date(y, m - 1, d);
+  const diff = ((rd - dl.getDay() + 7) % 7) || 7;
+  return dateKey(new Date(dl.getFullYear(), dl.getMonth(), dl.getDate() + diff));
+}
 
 function soEsc(s) { return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
@@ -7960,7 +7993,9 @@ function soVendorChanged() {
   if (hint) {
     const cfg = soVendorCfg(sel.value);
     if (cfg && cfg.day !== null) {
-      hint.textContent = `Order deadline: ${SO_DAYS[cfg.day]}${cfg.cutoff ? ' ' + cfg.cutoff : ''}${cfg.freq === 'biweekly' ? ' (every other week)' : ''} — next due ${soFmtDate(soNextDeadline(cfg))}`;
+      const nd = soNextDeadline(cfg);
+      const ready = soReadyDate(sel.value, nd);
+      hint.textContent = `Order deadline: ${SO_DAYS[cfg.day]}${cfg.cutoff ? ' ' + cfg.cutoff : ''}${cfg.freq === 'biweekly' ? ' (every other week)' : ''} — next due ${soFmtDate(nd)}${ready ? ` · tell the customer it's ready ${soFmtDate(ready)}` : ''}`;
     } else if (sel.value && sel.value !== '__other__') {
       hint.textContent = 'No order deadline set for this vendor yet — a manager can add one in Vendor Deadlines below.';
     } else {
@@ -7990,10 +8025,26 @@ async function submitSpecialOrder() {
   const vendor = vendorSel === '__other__' ? vendorOther : vendorSel;
   const cfg = soVendorCfg(vendor);
   const deadline = cfg && cfg.day !== null ? soNextDeadline(cfg) : null;
+  const ready = soReadyDate(vendor, deadline);
+
+  let extraNote = '';
+  const flag = soItemFlag(_soPicked ? _soPicked.cat_id : null);
+  if (flag && flag.kind === 'vfd') {
+    if (!confirm('This feed requires a VFD (vet feed directive).\n\nDoes the customer have a VFD from their vet?\n\nOK = yes, log the order. Cancel = don\'t order yet.')) return;
+    extraNote = '[VFD confirmed by ' + currentUser.name + ']';
+  }
+  if (flag && flag.kind === 'pallet' && qty % 12 !== 0) {
+    alert('Associated only sells this molasses tub by the full pallet (12 tubs).\n\nSet the quantity to 12, 24, 36... or skip this order.');
+    return;
+  }
+  if (flag && flag.kind === 'barrel') {
+    if (!confirm('Associated charges a $35 deposit per barrel (' + qty + ' barrel' + (qty > 1 ? 's' : '') + ' = $' + (35 * qty) + ').\n\nOK = got it, log the order.')) return;
+    extraNote = '[Barrel deposit $' + (35 * qty) + ']';
+  }
 
   const o = {
     id: 'so' + Date.now(),
-    customerName: name, phone, email, product, qty, vendor, notes,
+    customerName: name, phone, email, product, qty, vendor, notes: [notes, extraNote].filter(Boolean).join(' '),
     depositTaken, depositAmount: depositTaken ? depositAmount : 0,
     status: 'pending', deadline,
     orderedAt: null, arrivedAt: null, pickedUpAt: null, cancelledAt: null,
@@ -8016,7 +8067,9 @@ async function submitSpecialOrder() {
   soTab = 'pending';
   renderSpecialOrders();
   updateSoBadge();
-  alert(deadline
+  alert(ready
+    ? `Special order logged for ${name}.\n\nTell them: it'll be ready ${soFmtDate(ready)}.`
+    : deadline
     ? `Special order logged for ${name}. Next ${vendor} order deadline: ${soFmtDate(deadline)}.`
     : `Special order logged for ${name}.`);
 }
@@ -8231,6 +8284,8 @@ function soCardHTML(o) {
     </div>
     <div class="feedback-body"><strong>${soEsc(o.product)}</strong> · Qty ${o.qty} · ${soEsc(o.vendor || 'No vendor')}${o.itemNumber ? ` · <span style="color:#999;">#${soEsc(o.itemNumber)}</span>` : ''}</div>
     ${o.notes ? `<div class="feedback-body" style="color:#888;font-size:12px;margin-top:2px;">${soEsc(o.notes)}</div>` : ''}
+    ${(o.status === 'pending' || o.status === 'ordered') ? soFlagHTML(soItemFlag(o.catalogId)) : ''}
+    ${(o.status === 'pending' || o.status === 'ordered') && soReadyDate(o.vendor, o.deadline) ? `<div class="feedback-body" style="font-size:12px;margin-top:4px;color:#2e7d32;font-weight:600;">📅 Promised ready ${soFmtDate(soReadyDate(o.vendor, o.deadline))}</div>` : ''}
     <div class="feedback-meta">
       ${o.deadline && (o.status === 'pending') ? `${dueToday ? '<strong style="color:#d4853a;">⏰ Order deadline TODAY</strong>' : 'Order by ' + soFmtDate(o.deadline)}${soVendorCfg(o.vendor)?.cutoff ? ' ' + soVendorCfg(o.vendor).cutoff : ''} · ` : ''}
       Logged by ${soEsc(o.loggedBy || '')} · ${soFmtDate(o.date)}
@@ -8303,6 +8358,8 @@ function renderSpecialOrders() {
       <button class="btn btn-primary" onclick="submitSpecialOrder()">Log Special Order</button>
     </div>
 
+    ${soAssocRunHTML()}
+
     <div class="card">
       <div class="card-title">Order Board</div>
       <div id="so-summary" style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border);">
@@ -8351,10 +8408,141 @@ function renderSpecialOrders() {
             <span style="font-size:11px;color:#999;">%</span>
           </div>`).join('')}
       </div>
+      <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);font-size:12px;color:#888;">Vendor overrides (beat the category margins)</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:6px;max-width:220px;">
+        <div style="flex:1;font-size:12px;">Associated Feed</div>
+        <input class="form-input" id="so-dm-ASSOC" type="number" min="0" max="95" value="${soDistMargins()['ASSOC']}" style="width:64px;font-size:12px;padding:6px 8px;">
+        <span style="font-size:11px;color:#999;">%</span>
+      </div>
       <button class="btn btn-primary" style="margin-top:14px;" onclick="soSaveMarkups()">Save Markups</button>
     </div>` : ''}
   `;
   if (_soPendingPick) { const p = _soPendingPick; _soPendingPick = null; soApplyPick(p); }
+  soAssocLoadCosts();
+}
+
+// ══════════════════════════════════════════
+// ASSOCIATED FEED — WEEKLY RUN (Tue cutoff -> Wed AM order -> Fri pickup in Turlock)
+// ══════════════════════════════════════════
+const SO_ASSOC = { account:'1003352', email:'sackfeedcustomerservice@associatedfeed.com', contact:'Deanna', phone:'209-664-3376', tripCost:300 };
+let _soAssocCat = {};      // cat_id -> catalog row (cost lookup)
+let _soAssocExtra = '';    // store-stock lines typed into the run card
+
+function soAssocPending() { return (_cache.specialOrders || []).filter(o => o.vendor === 'Associated Feed' && o.status === 'pending'); }
+
+function soAssocLines() {
+  const lines = {};
+  soAssocPending().forEach(o => {
+    const key = o.catalogId || ('txt:' + o.product.toLowerCase());
+    if (!lines[key]) lines[key] = { catId: o.catalogId, item: o.itemNumber || '', product: o.product, qty: 0, customers: [] };
+    lines[key].qty += Number(o.qty) || 0;
+    lines[key].customers.push(o.customerName);
+  });
+  return Object.values(lines).sort((a, b) => (a.item || 'zz').localeCompare(b.item || 'zz'));
+}
+
+function soAssocDates() {
+  const cfg = soVendorCfg('Associated Feed');
+  const deadline = soNextDeadline(cfg);
+  const ready = soReadyDate('Associated Feed', deadline);
+  let orderDay = null;
+  if (deadline) { const [y, m, d] = deadline.split('-').map(Number); orderDay = dateKey(new Date(y, m - 1, d + 1)); }
+  return { deadline, orderDay, ready, cutoff: cfg && cfg.cutoff };
+}
+
+async function soAssocLoadCosts() {
+  const ids = [...new Set(soAssocPending().map(o => o.catalogId).filter(id => id && !_soAssocCat[id]))];
+  if (!ids.length || typeof sb === 'undefined') return;
+  try {
+    const { data } = await sb.from('ff_vendor_catalog').select('*').in('cat_id', ids);
+    (data || []).forEach(r => { _soAssocCat[r.cat_id] = r; });
+    const box = document.getElementById('so-assoc-run');
+    if (box) box.outerHTML = soAssocRunHTML();
+  } catch (e) { console.error('assoc cost lookup', e); }
+}
+
+function soAssocRunHTML() {
+  const lines = soAssocLines();
+  const dt = soAssocDates();
+  let cost = 0, retail = 0, units = 0, priced = true;
+  lines.forEach(l => {
+    units += l.qty;
+    const it = l.catId ? _soAssocCat[l.catId] : null;
+    const c = it ? (it.each_cost || it.cost) : null;
+    const r = it ? soSuggestRetail(it) : null;
+    if (c && r) { cost += c * l.qty; retail += r * l.qty; } else priced = false;
+  });
+  const profit = retail - cost;
+  const gap = SO_ASSOC.tripCost - profit;
+  const money = n => '$' + n.toFixed(2);
+  return `<div class="card" id="so-assoc-run" style="border-left:4px solid var(--gold);">
+    <div class="card-title">🚚 Associated Feed — Weekly Run</div>
+    <div class="card-sub">Customer cutoff <strong>${soFmtDate(dt.deadline)}${dt.cutoff ? ' ' + soEsc(dt.cutoff) : ''}</strong> · place order <strong>${soFmtDate(dt.orderDay)} AM</strong> · pickup in Turlock <strong>${soFmtDate(dt.ready)}</strong></div>
+    ${lines.length ? `
+      <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <tr style="text-align:left;color:#999;border-bottom:1px solid var(--border);"><th style="padding:6px 4px;">Item #</th><th>Product</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Our cost</th><th>For</th></tr>
+        ${lines.map(l => {
+          const it = l.catId ? _soAssocCat[l.catId] : null;
+          const c = it ? (it.each_cost || it.cost) : null;
+          const f = soItemFlag(l.catId);
+          return `<tr style="border-bottom:1px solid var(--border);${f ? 'background:#fdecea;' : ''}">
+            <td style="padding:6px 4px;">${soEsc(l.item || '—')}</td>
+            <td>${soEsc(l.product)}${f ? ' ⚠️' : ''}</td>
+            <td style="text-align:right;font-weight:600;">${l.qty}</td>
+            <td style="text-align:right;">${c ? money(c * l.qty) : '<span style="color:#d4853a;">no #</span>'}</td>
+            <td style="color:#888;">${l.customers.map(soEsc).join(', ')}</td></tr>`;
+        }).join('')}
+      </table></div>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;margin:12px 0;font-size:12px;">
+        <div><strong>${units}</strong> units</div>
+        <div>Cost <strong>${money(cost)}</strong></div>
+        <div>Retail <strong>${money(retail)}</strong></div>
+        <div>Gross profit <strong style="color:${gap <= 0 ? '#2e7d32' : '#d4853a'};">${money(profit)}</strong></div>
+        <div style="color:${gap <= 0 ? '#2e7d32' : '#d4853a'};">${gap <= 0 ? '✓ Special orders alone cover the ~$300 trip' : `${money(gap)} short of the ~$300 trip, add store stock below`}</div>
+      </div>
+      ${priced ? '' : '<div style="font-size:11px;color:#d4853a;margin-bottom:8px;">Some lines were typed in without picking from the catalog, so their cost isn\'t counted. Add the item # by hand when you place the order.</div>'}` :
+      `<div style="padding:14px 0;color:#999;font-size:13px;">No Associated special orders waiting yet for this run.</div>`}
+    <div class="form-group"><div class="form-label">Also add to this order (store stock, optional)</div>
+      <textarea class="form-input" id="so-assoc-extra" rows="3" placeholder="e.g. #700008 Swanson Layer 16% Pellet — 10" oninput="_soAssocExtra=this.value">${soEsc(_soAssocExtra)}</textarea></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+      <button class="btn btn-sm btn-outline" onclick="soAssocCopy()">📋 Copy order list</button>
+      <button class="btn btn-sm btn-primary" onclick="soAssocEmail()">✉️ Draft email to ${SO_ASSOC.contact}</button>
+      ${lines.length ? `<button class="btn btn-sm btn-gold" onclick="soAssocMarkOrdered()">✓ Mark all as ordered</button>` : ''}
+    </div>
+    <div style="font-size:11px;color:#aaa;margin-top:8px;">The email button opens a draft in your mail app. Nothing sends until you hit send. Associated: ${SO_ASSOC.phone} · Acct #${SO_ASSOC.account}</div>
+  </div>`;
+}
+
+function soAssocOrderText() {
+  const out = soAssocLines().map(l => `${l.item ? '#' + l.item + ' ' : ''}${l.product} — ${l.qty}`);
+  const extra = (_soAssocExtra || '').split('\n').map(x => x.trim()).filter(Boolean);
+  return out.concat(extra).join('\n');
+}
+
+async function soAssocCopy() {
+  const txt = soAssocOrderText();
+  if (!txt) { alert('Nothing on the order yet.'); return; }
+  try { await navigator.clipboard.writeText(txt); alert('Order list copied.'); }
+  catch (e) { prompt('Copy this order list:', txt); }
+}
+
+function soAssocEmail() {
+  const txt = soAssocOrderText();
+  if (!txt) { alert('Nothing on the order yet.'); return; }
+  const dt = soAssocDates();
+  const subject = `Foothill Feed order for pickup ${soFmtDate(dt.ready)} (Acct #${SO_ASSOC.account})`;
+  const body = `Hi ${SO_ASSOC.contact},\n\nPlease pull the following for pickup this ${soFmtDate(dt.ready)}. Account #${SO_ASSOC.account}, Foothill Feed & Gift.\n\n${txt}\n\nThanks,\n${currentUser.name}\nFoothill Feed & Gift\n916-652-7121`;
+  window.location.href = `mailto:${SO_ASSOC.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+async function soAssocMarkOrdered() {
+  const list = soAssocPending();
+  if (!list.length) return;
+  if (!confirm(`Mark ${list.length} Associated special order${list.length > 1 ? 's' : ''} as ordered? Only do this after the order is sent to Associated.`)) return;
+  const now = new Date().toISOString();
+  for (const o of list) { o.status = 'ordered'; o.orderedAt = now; await saveSpecialOrder(o); }
+  renderSpecialOrders(); updateSoBadge();
 }
 
 // ══════════════════════════════════════════
@@ -8389,12 +8577,18 @@ function soCatBucket(cat) {
   return 'general';
 }
 
+function soItemMarginPct(item) {
+  const dm = soDistMargins();
+  if (item.distributor && dm[item.distributor] !== undefined) return Number(dm[item.distributor]);
+  const m = soMarkups();
+  const bucket = soCatBucket(item.category);
+  return m[bucket] !== undefined ? m[bucket] : 50;
+}
+
 function soSuggestRetail(item) {
   const base = item.each_cost || item.cost;
   if (!base) return null;
-  const bucket = soCatBucket(item.category);
-  const m = soMarkups();
-  const pct = m[bucket] !== undefined ? m[bucket] : 50;
+  const pct = soItemMarginPct(item);
   // pct is a MARGIN target: retail = cost / (1 - margin), then round up to .99
   const frac = Math.min(Math.max(pct / 100, 0), 0.95);
   const raw = base / (1 - frac);
@@ -8444,7 +8638,7 @@ async function soRunTypeahead(term) {
     const retail = soSuggestRetail(it);
     return `<div onclick="soPickItem(${i})" style="padding:9px 12px;border-bottom:1px solid var(--border);cursor:pointer;" onmouseover="this.style.background='#faf8f4'" onmouseout="this.style.background='white'">
       <div style="font-size:13px;font-weight:500;">${soEsc(it.description)}</div>
-      <div style="font-size:11px;color:#999;">${soEsc(it.brand || '')} · <span style="color:var(--gold);font-weight:600;">${soEsc(it.distributor)}</span> · #${soEsc(it.item_number || '')}${base ? ` · cost $${Number(base).toFixed(2)}` : ''}${retail ? ` · retail ~$${retail.toFixed(2)}` : ''}</div>
+      <div style="font-size:11px;color:#999;">${soEsc(it.brand || '')} · <span style="color:var(--gold);font-weight:600;">${soEsc(soDistLabel(it.distributor))}</span> · #${soEsc(it.item_number || '')}${base ? ` · cost $${Number(base).toFixed(2)}` : ''}${retail ? ` · retail ~$${retail.toFixed(2)}` : ''}</div>
     </div>`;
   }).join('');
   dd.style.display = 'block';
@@ -8463,14 +8657,16 @@ function soApplyPick(it) {
   const dd = document.getElementById('so-typeahead');
   if (dd) dd.style.display = 'none';
   const vSel = document.getElementById('so-vendor');
-  if (vSel && [...vSel.options].some(o => o.value === it.distributor)) { vSel.value = it.distributor; soVendorChanged(); }
+  const vName = SO_DIST_VENDOR[it.distributor] || it.distributor;
+  if (vSel && [...vSel.options].some(o => o.value === vName)) { vSel.value = vName; soVendorChanged(); }
   const info = document.getElementById('so-pick-info');
   if (info) {
     const base = it.each_cost || it.cost;
     const retail = soSuggestRetail(it);
     const unitLabel = it.each_cost ? 'each' : ((it.unit || '').trim().toLowerCase() || 'unit');
-    const pct = soMarkups()[it.category] !== undefined ? soMarkups()[it.category] : 50;
-    info.innerHTML = `📦 <strong>${soEsc(it.brand || '')}</strong> · Item #${soEsc(it.item_number || '')} · Cost $${base ? Number(base).toFixed(2) : '—'}/${unitLabel}${(it.case_qty > 1 && it.cost && it.each_cost) ? ` · case of ${it.case_qty}: $${Number(it.cost).toFixed(2)}` : ''}${retail ? ` · <strong style="color:var(--dark);">Suggested retail $${retail.toFixed(2)}</strong> <span style="color:#bbb;">(${pct}% · ${SO_CAT_LABELS[it.category] || it.category})</span>` : ''}`;
+    const pct = soItemMarginPct(it);
+    const dmOverride = soDistMargins()[it.distributor] !== undefined;
+    info.innerHTML = `📦 <strong>${soEsc(it.brand || '')}</strong> · Item #${soEsc(it.item_number || '')} · Cost $${base ? Number(base).toFixed(2) : '—'}/${unitLabel}${(it.case_qty > 1 && it.cost && it.each_cost) ? ` · case of ${it.case_qty}: $${Number(it.cost).toFixed(2)}` : ''}${retail ? ` · <strong style="color:var(--dark);">Suggested retail $${retail.toFixed(2)}</strong> <span style="color:#bbb;">(${pct}% margin · ${dmOverride ? soDistLabel(it.distributor) + ' rate' : (SO_CAT_LABELS[soCatBucket(it.category)] || it.category)})</span>` : ''}${soFlagHTML(soItemFlag(it.cat_id))}`;
   }
 }
 
@@ -8481,7 +8677,7 @@ let _catTimer = null;
 function renderCatalog() {
   const el = document.getElementById('page-catalog');
   if (!el) return;
-  const dists = ['Phillips', 'Newco', 'VSI', 'Bar ALE'];
+  const dists = ['ASSOC', 'Bar ALE', 'Farmers Feed', 'Newco', 'Phillips', 'VSI'];
   el.innerHTML = `
     <div class="card">
       <div class="card-title">Vendor Catalog</div>
@@ -8490,7 +8686,7 @@ function renderCatalog() {
         <input class="form-input" id="cat-search" placeholder="Search 10,000+ items…" style="flex:1;min-width:200px;" value="${soEsc(catState.term)}" oninput="catInput()">
         <select class="form-select" id="cat-dist" style="width:auto;" onchange="catFilter()">
           <option value="">All distributors</option>
-          ${dists.map(d => `<option value="${d}" ${catState.dist === d ? 'selected' : ''}>${d}</option>`).join('')}
+          ${dists.map(d => `<option value="${d}" ${catState.dist === d ? 'selected' : ''}>${soDistLabel(d)}</option>`).join('')}
         </select>
         <select class="form-select" id="cat-cat" style="width:auto;" onchange="catFilter()">
           <option value="">All categories</option>
@@ -8534,7 +8730,7 @@ async function loadCatalogResults() {
     <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;">
       <div style="flex:1;min-width:200px;">
         <div style="font-size:13px;font-weight:500;">${soEsc(it.description)}</div>
-        <div style="font-size:11px;color:#999;">${soEsc(it.brand || '')} · <span style="color:var(--gold);font-weight:600;">${soEsc(it.distributor)}</span> · #${soEsc(it.item_number || '')} · ${SO_CAT_LABELS[it.category] || 'General'}${it.case_qty > 1 ? ` · case of ${it.case_qty}` : ''}</div>
+        <div style="font-size:11px;color:#999;">${soEsc(it.brand || '')} · <span style="color:var(--gold);font-weight:600;">${soEsc(soDistLabel(it.distributor))}</span> · #${soEsc(it.item_number || '')} · ${SO_CAT_LABELS[soCatBucket(it.category)] || 'General'}${it.case_qty > 1 ? ` · case of ${it.case_qty}` : ''}</div>
       </div>
       <div style="text-align:right;font-size:12px;min-width:130px;">
         <div>Cost: <strong>$${base ? Number(base).toFixed(2) : '—'}</strong>${it.each_cost ? '/ea' : ''}</div>
@@ -8573,6 +8769,13 @@ async function soSaveMarkups() {
   if (!_cache.soSettings) _cache.soSettings = {};
   _cache.soSettings['markups'] = m;
   await saveSoSettings('markups', m);
+  const dmIn = document.getElementById('so-dm-ASSOC');
+  if (dmIn) {
+    const v = parseFloat(dmIn.value);
+    const dm = Object.assign({}, soDistMargins(), { ASSOC: isNaN(v) ? SO_DEFAULT_DIST_MARGINS.ASSOC : v });
+    _cache.soSettings['distMargins'] = dm;
+    await saveSoSettings('distMargins', dm);
+  }
   alert('Margins saved. Suggested retail prices update immediately.');
   renderSpecialOrders();
 }
