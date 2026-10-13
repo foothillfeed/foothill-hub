@@ -3564,8 +3564,40 @@ async function clockOut() {
   const worked = calcWorkedMinutes(entry);
   const mealDone = (entry?.mealBreaks||[]).filter(b=>b.back).length;
   if (worked >= 300 && mealDone === 0 && !entry?.waiverSigned) {
-    if (!confirm('⚠ California law requires a meal break for shifts over 5 hours. You have not recorded a meal break or signed a waiver. Clock out anyway?')) return;
+    showWaiverPrompt(worked <= 360);
+    return;
   }
+  await finishClockOut();
+}
+
+function showWaiverPrompt(canWaive) {
+  document.getElementById('waiver-prompt-can').style.display = canWaive ? '' : 'none';
+  document.getElementById('waiver-prompt-cannot').style.display = canWaive ? 'none' : '';
+  const cb = document.getElementById('waiver-prompt-cb');
+  if (cb) cb.checked = false;
+  updateWaiverPromptBtn();
+  document.getElementById('waiver-prompt-overlay').classList.add('active');
+}
+function updateWaiverPromptBtn() {
+  const cb = document.getElementById('waiver-prompt-cb');
+  const btn = document.getElementById('waiver-prompt-sign');
+  if (btn) { btn.disabled = !cb?.checked; btn.style.opacity = cb?.checked ? '1' : '0.45'; }
+}
+function closeWaiverPrompt() {
+  document.getElementById('waiver-prompt-overlay').classList.remove('active');
+}
+async function waiverPromptSignAndClockOut() {
+  if (!document.getElementById('waiver-prompt-cb')?.checked) return;
+  closeWaiverPrompt();
+  await updateTodayClock(e => { e.waiverSigned = true; });
+  await finishClockOut();
+}
+async function waiverPromptClockOutAnyway() {
+  closeWaiverPrompt();
+  await finishClockOut();
+}
+
+async function finishClockOut() {
   await updateTodayClock(e => { e.clockOut = now(); e.state = 'clocked-out'; e.totalMinutes = calcWorkedMinutes(e); });
   clearInterval(clockTimer);
   renderTimeclock();
@@ -8848,6 +8880,37 @@ seedRecurringTasks();
     <div class="prompt-btn-row">
       <button class="btn btn-primary" style="width:100%;padding:14px;font-size:14px;" onclick="closeCheckinPrompt()">Fill Out Check-In →</button>
       <button class="btn btn-outline" style="width:100%;font-size:12px;color:#aaa;" onclick="document.getElementById('checkin-prompt-overlay').classList.remove('active')">I'll do it later</button>
+    </div>
+  </div>
+</div>
+
+<!-- MEAL WAIVER PROMPT (shown at clock-out) -->
+<div class="prompt-overlay" id="waiver-prompt-overlay">
+  <div class="prompt-box" style="border:3px solid #e65100;text-align:left;">
+    <div class="prompt-icon" style="text-align:center;">⚠️</div>
+    <div class="prompt-title" style="text-align:center;color:#e65100;">Meal Break Waiver Needed</div>
+    <div id="waiver-prompt-can">
+      <div class="prompt-sub" style="text-align:left;">
+        You worked over 5 hours and no meal break was recorded. California law requires a 30-minute meal break for shifts over 5 hours. Because your shift was 6 hours or less, you may voluntarily waive it.
+      </div>
+      <label style="display:flex;gap:12px;align-items:flex-start;background:#fff3e0;border:1px solid #ffb74d;border-radius:10px;padding:14px;margin:14px 0;cursor:pointer;font-size:13px;color:#333;line-height:1.5;">
+        <input type="checkbox" id="waiver-prompt-cb" onchange="updateWaiverPromptBtn()" style="width:22px;height:22px;flex-shrink:0;margin-top:1px;">
+        <span>I voluntarily waive my meal break for this shift. I understand this is my right under California Labor Code §512.</span>
+      </label>
+      <div class="prompt-btn-row">
+        <button class="btn" id="waiver-prompt-sign" style="width:100%;padding:14px;font-size:14px;background:#e65100;color:white;" onclick="waiverPromptSignAndClockOut()">Sign Waiver &amp; Clock Out</button>
+        <button class="btn btn-outline" style="width:100%;font-size:12px;" onclick="closeWaiverPrompt()">Go Back</button>
+        <button class="btn btn-outline" style="width:100%;font-size:11px;color:#aaa;" onclick="waiverPromptClockOutAnyway()">I don't want to waive — clock out without signing</button>
+      </div>
+    </div>
+    <div id="waiver-prompt-cannot" style="display:none;">
+      <div class="prompt-sub" style="text-align:left;">
+        You worked over 6 hours and no meal break was recorded. A meal break can't be waived for shifts longer than 6 hours. Please let a manager know. This shift will be flagged on the timecard.
+      </div>
+      <div class="prompt-btn-row">
+        <button class="btn btn-outline" style="width:100%;padding:12px;" onclick="closeWaiverPrompt()">Go Back</button>
+        <button class="btn" style="width:100%;padding:12px;background:#e65100;color:white;" onclick="waiverPromptClockOutAnyway()">Clock Out Anyway</button>
+      </div>
     </div>
   </div>
 </div>
