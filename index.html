@@ -1356,6 +1356,8 @@ function stayLoggedIn() {
 }
 
 function autoLogout() {
+  // Staff taking a damage photo — camera/picker is open, don't kick them out
+  if (window._ddPickerAt && Date.now() - window._ddPickerAt < 10 * 60 * 1000) { resetInactivityTimer(); return; }
   hideInactivityWarning();
   clearTimeout(inactivityTimer);
   clearTimeout(warningTimer);
@@ -1523,6 +1525,7 @@ async function loadAllData(uid) {
       damagePhotos: r.damage_photos || {},
       specials: r.specials || {},
       report: r.report || null,
+      startedAt: r.started_at || null,
       parsedAt: r.parsed_at,
       rawFilename: r.raw_filename
     }));
@@ -1799,6 +1802,7 @@ async function populateLoginDropdown() {
   sel.innerHTML = '<option value="">Select your name…</option>' +
     ids.map(id => `<option value="${id}">${roster[id].name}</option>`).join('');
   if (current && roster[current]) sel.value = current;
+  ddLoginRecoveryHint();
 }
 document.addEventListener('DOMContentLoaded', populateLoginDropdown);
 
@@ -1855,6 +1859,7 @@ async function launchApp() {
 
   // Check weekly summary after a short delay
   setTimeout(checkShowWeeklySummary, 1200);
+  ddResumeAfterReload();
   checkAnthropicKey();
   // Start inactivity timer
   resetInactivityTimer();
@@ -7439,14 +7444,59 @@ function ddCompressPhoto(file) {
 }
 
 async function ddDamagePhotos(input) {
-  if (!_ddModal || _ddModal.type !== 'damage' || !input.files) return;
+  window._ddPickerAt = 0;
+  if (!input.files || !input.files.length) return;
+  if (!_ddModal || _ddModal.type !== 'damage') {
+    alert('The damage window closed before the photo came back. Tap the item’s Damaged flag and add the photo again.');
+    return;
+  }
   const files = Array.from(input.files).slice(0, 4 - _ddModal.photos.length);
+  let failed = 0;
   for (const f of files) {
     const p = await ddCompressPhoto(f);
-    if (p) _ddModal.photos.push(p);
+    if (p) _ddModal.photos.push(p); else failed++;
   }
   input.value = '';
+  ddClearPickStash();
   renderDeliveryCheckin();
+  if (failed) alert('Couldn’t read ' + failed + ' photo' + (failed > 1 ? 's' : '') + '. Try choosing it from your photo library instead.');
+}
+
+// Don't auto-logout while someone is in the camera / photo picker.
+// Older iPads often reload Safari when the camera opens (low memory) — remember
+// where we were so login can drop staff right back on the damaged item.
+const DD_PICK_KEY = 'ff_dd_pick';
+function ddPickerOpened() {
+  window._ddPickerAt = Date.now();
+  try {
+    if (_ddModal && currentUser) localStorage.setItem(DD_PICK_KEY, JSON.stringify({ uid: currentUser.id, invId: _ddActiveId, idx: _ddModal.idx, count: _ddModal.count, at: Date.now() }));
+  } catch (e) {}
+}
+function ddPickStash() {
+  try { const s = JSON.parse(localStorage.getItem(DD_PICK_KEY) || 'null'); return s && Date.now() - s.at < 15 * 60 * 1000 ? s : null; } catch (e) { return null; }
+}
+function ddClearPickStash() { try { localStorage.removeItem(DD_PICK_KEY); } catch (e) {} }
+
+function ddLoginRecoveryHint() {
+  const s = ddPickStash(); if (!s) return;
+  const sel = document.getElementById('loginName');
+  if (sel && sel.querySelector('option[value="' + s.uid + '"]')) sel.value = s.uid;
+  const err = document.getElementById('loginError');
+  if (err) err.textContent = 'The iPad reloaded while the camera was open. Enter your PIN to go right back to the damaged item.';
+}
+
+function ddResumeAfterReload() {
+  const s = ddPickStash();
+  if (!s || !currentUser || s.uid !== currentUser.id) return;
+  ddClearPickStash();
+  const inv = ddFind(s.invId);
+  if (!inv || !(inv.items || [])[s.idx]) return;
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === 'checkin-delivery'));
+  _ddActiveId = s.invId; _ddView = 'checkin';
+  showPage('checkin-delivery');
+  ddOpenDamageModal(s.idx);
+  if (_ddModal) { _ddModal.count = Math.max(_ddModal.count || 1, s.count || 1); renderDeliveryCheckin(); }
+  setTimeout(() => alert('Back where you were. The iPad reloaded when the camera opened, so the photo didn’t come through.\n\nTap 📷 → Photo Library and pick the photo you just took.'), 300);
 }
 
 function ddDamageRemovePhoto(i) {
@@ -7466,13 +7516,14 @@ async function ddDamageSave() {
   inv.flags[idx] = 'damaged';
   inv.status = 'in_progress';
   _ddModal = null;
+  ddClearPickStash();
   await saveDeliveryInvoiceProgress(inv);
   renderDeliveryCheckin();
 }
 
 function ddFuzzyType(v) { _ddFuzzyQ = v; renderDeliveryCheckin(); const el = document.getElementById('dd-fuzzy-q'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }
 function ddFuzzyPick(idx) { _ddModal = null; ddOpenQtyModal(idx); }
-function ddCloseModal() { _ddModal = null; renderDeliveryCheckin(); }
+function ddCloseModal() { _ddModal = null; ddClearPickStash(); renderDeliveryCheckin(); }
 
 // ── Quick interactions on item rows ──
 async function ddToggleCheck(idx) {
@@ -7504,7 +7555,20 @@ async function ddClearFlag(idx) {
 
 function ddOpenCheckin(id) {
   _ddActiveId = id; _ddView = 'checkin'; _ddModal = null;
+  const inv = ddActive();
+  if (inv && !inv.startedAt && (inv.status === 'pending' || inv.status === 'in_progress')) {
+    inv.startedAt = new Date().toISOString();
+    sbUpdate('ff_delivery_invoices', 'id', inv.id, { started_at: inv.startedAt });
+  }
   renderDeliveryCheckin();
+}
+
+async function ddOpenReport(id) {
+  _ddActiveId = id; _ddModal = null;
+  const inv = ddActive(); if (!inv) return;
+  // Reuse the email written at check-in (keeps the original delivery date); photos are pulled live
+  if (inv.report && inv.report.vendorEmail) { _ddView = 'report'; renderDeliveryCheckin(); return; }
+  await ddGenerateReport(); // no saved report yet — build one from saved flags/photos (status unchanged)
 }
 
 function ddBackToQueue() { _ddView = 'queue'; _ddActiveId = null; _ddModal = null; renderDeliveryCheckin(); }
@@ -7514,7 +7578,8 @@ async function ddGenerateReport() {
   const inv = ddActive(); if (!inv || !(inv.items || []).length) return;
   const items = inv.items, flags = inv.flags || {}, receivedQty = inv.receivedQty || {},
         damagedQty = inv.damagedQty || {}, damagePhotos = inv.damagePhotos || {}, specials = inv.specials || {};
-  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  // Date the delivery was received = the day check-in was first started (falls back to today)
+  const today = (inv.startedAt ? new Date(inv.startedAt) : new Date()).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
   const nums = String(inv.invoiceNumber || '').split(',').map(s => s.trim()).filter(Boolean);
   const isMerged = nums.length > 1;
   const invoiceLabel = isMerged ? 'Invoices #' + nums.join(', #') : 'Invoice #' + nums[0];
@@ -7532,7 +7597,7 @@ async function ddGenerateReport() {
   const extra = flagged.filter(x => x.flag === 'extra');
   const hasIssues = short.length || damaged.length || extra.length;
 
-  let vendorEmail = 'Hi,\n\nPlease see the following exceptions from our delivery today (' + today + '), ' + invoiceLabel + ':\n\n';
+  let vendorEmail = 'Hi,\n\nPlease see the following exceptions from our delivery received ' + today + ', ' + invoiceLabel + ':\n\n';
   const emitSection = (list, header, fmt) => {
     if (!list.length) return '';
     let s = header + '\n';
@@ -7564,7 +7629,7 @@ async function ddGenerateReport() {
   let priceEmail = '';
   const priceChanges = inv.priceChanges || [];
   if (priceChanges.length) {
-    priceEmail = 'Hi Jeff,\n\nThe following items had price changes on today\u2019s delivery (' + today + '), ' + invoiceLabel + '. Please review retail pricing before these items go on the shelf:\n\n';
+    priceEmail = 'Hi Jeff,\n\nThe following items had price changes on the delivery received ' + today + ', ' + invoiceLabel + '. Please review retail pricing before these items go on the shelf:\n\n';
     priceChanges.forEach(pc => { priceEmail += '  \u2022 ' + pc.description + '\n    Previous cost: $' + pc.previous + ' \u2192 New cost: $' + pc.current + '\n\n'; });
     priceEmail += 'Foothill Feed Delivery System';
   }
@@ -7588,6 +7653,53 @@ function ddCopyText(elId) {
   el.select();
   document.execCommand('copy');
   alert('Copied \u2014 paste into an email or text.');
+}
+
+// \u2500\u2500 Damage photos \u2192 vendor email (share sheet on phones, download fallback) \u2500\u2500
+function ddReportPhotos(inv) {
+  const out = [], flags = inv.flags || {}, dp = inv.damagePhotos || {};
+  Object.keys(dp).forEach(i => {
+    if (flags[i] !== 'damaged') return;
+    const item = (inv.items || [])[parseInt(i)];
+    const base = String((item && item.description) || ('item-' + i)).replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'item';
+    (dp[i] || []).forEach((src, n) => { if (src) out.push({ src: src, name: 'Damaged_' + base + '_' + (n + 1) + '.jpg' }); });
+  });
+  return out;
+}
+
+function ddDataUrlToFile(dataUrl, name) {
+  const parts = String(dataUrl).split(',');
+  const mime = ((parts[0] || '').match(/:(.*?);/) || [])[1] || 'image/jpeg';
+  const bin = atob(parts[1] || '');
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new File([arr], name, { type: mime });
+}
+
+async function ddSendWithPhotos() {
+  const inv = ddActive(); if (!inv || !inv.report) return;
+  const r = inv.report;
+  const files = ddReportPhotos(inv).map(p => ddDataUrlToFile(p.src, p.name));
+  const subject = (inv.vendor || 'Delivery') + ' delivery exceptions \u2014 ' + r.invoiceLabel;
+  const isTouch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  if (isTouch && files.length && navigator.canShare && navigator.canShare({ files: files })) {
+    try {
+      await navigator.share({ files: files, title: subject, text: r.vendorEmail });
+      return;
+    } catch (e) {
+      if (e && e.name === 'AbortError') return; // user closed the share sheet
+    }
+  }
+  // Fallback (desktop / older browsers): download photos + copy the email text
+  files.forEach(f => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(f); a.download = f.name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  });
+  const ta = document.getElementById('dd-vendor-email');
+  if (ta) { ta.select(); document.execCommand('copy'); }
+  alert(files.length + ' photo' + (files.length === 1 ? '' : 's') + ' downloaded and the email text is copied.\n\nStart a new email to the vendor, paste the text, and attach the photos from your Downloads.');
 }
 
 async function markDeliveryDone(invId) {
@@ -7642,7 +7754,7 @@ async function refreshDeliveryInvoices() {
       priceChanges: r.price_changes || [], status: r.status || 'pending',
       checkedIn: r.checked_in || {}, flags: r.flags || {}, receivedQty: r.received_qty || {},
       damagedQty: r.damaged_qty || {}, damagePhotos: r.damage_photos || {},
-      specials: r.specials || {}, report: r.report || null,
+      specials: r.specials || {}, report: r.report || null, startedAt: r.started_at || null,
       parsedAt: r.parsed_at, rawFilename: r.raw_filename
     }));
     await ddMergePending();
@@ -7717,7 +7829,9 @@ function ddRenderQueue() {
     html += '<div class="card"><div class="card-title">Recently Completed</div>' +
       done.map(i => '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px;">' +
         '<div><strong>' + ddEsc(i.vendor) + '</strong> \u00b7 Invoice #' + ddEsc(i.invoiceNumber) + '</div>' +
-        '<div style="color:#2e7d32;font-weight:500;">\u2713 Done \u00b7 ' + ddEsc(i.deliveryDate) + '</div></div>').join('') +
+        '<div style="display:flex;align-items:center;gap:10px;"><span style="color:#2e7d32;font-weight:500;">\u2713 Done \u00b7 ' + ddEsc(i.deliveryDate) + '</span>' +
+        (Object.keys(i.flags || {}).length ? '<button onclick="ddOpenReport(\'' + i.id + '\')" style="padding:6px 12px;border-radius:8px;background:' + DD_RED + ';color:white;border:none;font-size:12px;font-weight:600;cursor:pointer;">\ud83d\udce7 Vendor email' + (ddReportPhotos(i).length ? ' \ud83d\udcf7' + ddReportPhotos(i).length : '') + '</button>' : '') +
+        '</div></div>').join('') +
       '</div>';
   }
 
@@ -7837,9 +7951,9 @@ function ddModalHTML(inv) {
       '<div style="font-size:12px;color:#888;text-align:center;margin-bottom:14px;">How many are damaged?</div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">' +
         m.photos.map((p, i) => '<div style="position:relative;"><img src="' + p + '" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #ddd;"><span onclick="ddDamageRemovePhoto(' + i + ')" style="position:absolute;top:-6px;right:-6px;background:' + DD_RED + ';color:white;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;cursor:pointer;">\u2715</span></div>').join('') +
-        (m.photos.length < 4 ? '<label style="width:64px;height:64px;border:2px dashed #ccc;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:22px;color:#aaa;cursor:pointer;">\ud83d\udcf7<input type="file" accept="image/*" capture="environment" multiple style="display:none" onchange="ddDamagePhotos(this)"></label>' : '') +
+        (m.photos.length < 4 ? '<label style="width:64px;height:64px;border:2px dashed #ccc;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:22px;color:#aaa;cursor:pointer;">\ud83d\udcf7<input type="file" accept="image/*" multiple style="display:none" onclick="ddPickerOpened()" oncancel="window._ddPickerAt=0;ddClearPickStash()" onchange="ddDamagePhotos(this)"></label>' : '') +
       '</div>' +
-      '<div style="font-size:11px;color:#aaa;margin-bottom:14px;">Photos help with vendor credit claims. Up to 4.</div>' +
+      '<div style="font-size:11px;color:#aaa;margin-bottom:14px;">Photos help with vendor credit claims. Up to 4.<br>Tip: if the camera resets the Hub, take the picture with the iPad\u2019s Camera app first, then tap \ud83d\udcf7 \u2192 Photo Library.</div>' +
       '<div style="display:flex;gap:10px;">' +
         '<button onclick="ddCloseModal()" style="flex:1;padding:13px;border-radius:10px;background:white;border:1px solid #ddd;color:#888;cursor:pointer;">Cancel</button>' +
         '<button onclick="ddDamageSave()" style="flex:2;padding:13px;border-radius:10px;background:' + DD_RED + ';color:white;border:none;font-weight:700;cursor:pointer;">Save damage</button>' +
@@ -7886,9 +8000,16 @@ function ddRenderReport() {
   }
 
   if (r.hasIssues && r.vendorEmail) {
+    const rPhotos = ddReportPhotos(inv);
     html += '<div class="card"><div class="card-title">Vendor exception email \u2014 ready to send</div>' +
       '<textarea id="dd-vendor-email" readonly style="width:100%;height:200px;font-family:monospace;font-size:12px;border:1px solid #ddd;border-radius:8px;padding:10px;box-sizing:border-box;">' + ddEsc(r.vendorEmail) + '</textarea>' +
-      '<button onclick="ddCopyText(\'dd-vendor-email\')" style="margin-top:8px;padding:10px 18px;border-radius:8px;background:' + DD_GREEN + ';color:white;border:none;font-weight:600;cursor:pointer;">\ud83d\udccb Copy email</button></div>';
+      (rPhotos.length ?
+        '<div style="font-size:12px;color:#888;margin:10px 0 6px;">Damage photos (' + rPhotos.length + ')</div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + rPhotos.map(p => '<img src="' + p.src + '" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #ddd;">').join('') + '</div>' : '') +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">' +
+        (rPhotos.length ? '<button onclick="ddSendWithPhotos()" style="padding:10px 18px;border-radius:8px;background:' + DD_RED + ';color:white;border:none;font-weight:600;cursor:pointer;">\ud83d\udce4 Send email + photos</button>' : '') +
+        '<button onclick="ddCopyText(\'dd-vendor-email\')" style="padding:10px 18px;border-radius:8px;background:' + DD_GREEN + ';color:white;border:none;font-weight:600;cursor:pointer;">\ud83d\udccb Copy email</button>' +
+      '</div></div>';
   }
 
   if (r.priceEmail) {
@@ -7901,6 +8022,10 @@ function ddRenderReport() {
     html += '<div style="background:#fafaf8;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#aaa;"><strong>Cancelled / not shipped:</strong> ' + r.cancelled.map(ddEsc).join(' \u00b7 ') + '</div>';
   }
 
+  if (inv.status === 'done') {
+    html += '<button onclick="ddBackToQueue()" style="width:100%;padding:15px;border-radius:10px;font-weight:700;font-size:15px;cursor:pointer;background:white;color:' + DD_GREEN + ';border:1px solid ' + DD_GREEN + ';font-family:\'DM Sans\',sans-serif;">\u2190 Back to deliveries (already logged)</button>';
+    return html;
+  }
   html += '<button onclick="markDeliveryDone(\'' + inv.id + '\')" style="width:100%;padding:15px;border-radius:10px;font-weight:700;font-size:15px;cursor:pointer;background:' + DD_GREEN + ';color:white;border:none;font-family:\'DM Sans\',sans-serif;">\u2713 Mark Delivery Complete &amp; Log</button>';
   return html;
 }
