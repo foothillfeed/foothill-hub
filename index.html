@@ -276,6 +276,8 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
   table.ffs td.ffs-time { background:#2E86C1; color:#fff; white-space:nowrap; }
   table.ffs tr.ffs-alt td:not(.ffs-time) { background:#E0F7FA; }
   table.ffs td.ffs-me { font-weight:bold; }
+  .ffs-setup { background:var(--cream); border:1px solid var(--border); border-radius:10px; padding:10px 12px; margin-bottom:10px; }
+  .ffs-setup input { width:100%; max-width:560px; font-size:13px; padding:7px 9px; border:1px solid var(--border); border-radius:6px; margin:0 8px 6px 0; font-family:'DM Sans',sans-serif; }
   .schedule-grid th { background:var(--dark); color:var(--gold); padding:10px 8px; text-align:center; font-size:11px; letter-spacing:1px; text-transform:uppercase; font-weight:500; }
   .schedule-grid td { border:1px solid var(--border); padding:6px; vertical-align:top; min-width:90px; background:white; }
   .schedule-grid td.emp-name { background:var(--dark); color:var(--cream); font-weight:500; padding:8px 12px; font-size:13px; min-width:80px; }
@@ -1448,7 +1450,7 @@ document.addEventListener('DOMContentLoaded', initInactivityTracker);
 // UPDATE CHECK — tells open devices when a new Hub version is live
 // Bump HUB_BUILD on every deploy.
 // ══════════════════════════════════════════
-const HUB_BUILD = '2026-10-31.7';
+const HUB_BUILD = '2026-10-31.8';
 let _hubUpdateShown = false;
 async function hubCheckForUpdate() {
   if (_hubUpdateShown) return;
@@ -6363,11 +6365,19 @@ function renderSheetView(dates) {
   if (!wrap) return;
   const cols = buildSheetMatrix(dates);
   const me = currentUser && currentUser.id;
+  const canPost = currentUser && (currentUser.role === 'manager' || currentUser.role === 'lead');
   let html = `<div class="ffs-toolbar">
-    <button class="btn btn-gold" onclick="copySheetForGoogle()">Copy for Google Sheets</button>
+    ${canPost ? `<button class="btn btn-primary" onclick="postScheduleToSheet()">Post to Schedule Sheet</button>` : ''}
+    <button class="btn ${canPost ? 'btn-outline' : 'btn-gold'}" onclick="copySheetForGoogle()">Copy for Google Sheets</button>
     <span>Tab name: <b>${sheetTabName(dates)}</b></span>
     <label><input type="checkbox" ${_ffsShowEnds ? 'checked' : ''} onchange="setSheetEnds(this.checked)"> Show "out by" times</label>
+    ${canPost ? `<a href="#" onclick="toggleSheetSetup();return false;" style="font-size:12px;color:#888;">Sheet connection</a>` : ''}
     <span id="ffs-msg"></span>
+  </div>
+  <div id="ffs-setup" style="display:none;" class="ffs-setup">
+    <div style="font-size:12px;color:#666;margin-bottom:6px;">Paste the Web app URL from the Apps Script in the Foothill Feed Schedule sheet (Deploy → New deployment → Web app).</div>
+    <input id="ffs-url" type="url" placeholder="https://script.google.com/macros/s/…/exec" value="${((_cache.soSettings || {})['sched_sheet'] || {}).url || ''}">
+    <button class="btn btn-outline" onclick="saveSheetConnection()">Save & Test</button>
   </div><div class="ffs-scroll"><table class="ffs" id="ffs-table"><thead><tr><th>Time</th>`;
   dates.forEach(d => { html += `<th>${sheetHeader(d)}</th>`; });
   html += '</tr></thead><tbody>';
@@ -6414,6 +6424,70 @@ async function copySheetForGoogle() {
     let ok = false; try { ok = document.execCommand('copy'); } catch (e2) {}
     if (msg) msg.innerHTML = ok ? `<span style="color:#27ae60;">✓ Copied. Paste into cell A1 of a new tab named <b>${sheetTabName(dates)}</b>.</span>`
       : '<span style="color:var(--rust);">Couldn\'t copy automatically — the table is selected; press ⌘C (Ctrl+C) to copy.</span>';
+  }
+}
+
+// ── POST TO THE SCHEDULE SHEET ──
+// Sends the week to the Apps Script installed in the "Foothill Feed Schedule" spreadsheet, which copies
+// the newest week tab (keeping its formatting), names it like 112-118, moves it first and fills it in.
+// Connection is stored in ff_so_settings key sched_sheet = { url, secret }; the secret must match the script.
+function sheetConn() { return ((_cache.soSettings || {})['sched_sheet']) || {}; }
+function toggleSheetSetup(force) {
+  const el = document.getElementById('ffs-setup');
+  if (el) el.style.display = (force === true || el.style.display === 'none') ? 'block' : 'none';
+}
+async function callSheetScript(payload) {
+  const conn = sheetConn();
+  const res = await fetch(conn.url, { method: 'POST', body: JSON.stringify(Object.assign({ secret: conn.secret }, payload)) });
+  const txt = await res.text();
+  try { return JSON.parse(txt); } catch (e) { throw new Error('Unexpected reply from the sheet script — check the deployment is "Anyone" access'); }
+}
+async function saveSheetConnection() {
+  const url = (document.getElementById('ffs-url')?.value || '').trim();
+  const msg = document.getElementById('ffs-msg');
+  if (!/^https:\/\/script\.google\.com\/(a\/macros\/[^/]+|macros)\/s\/[^/]+\/exec$/.test(url)) {
+    if (msg) msg.innerHTML = '<span style="color:var(--rust);">That doesn\'t look like a Web app URL — it should start with https://script.google.com/macros/s/ and end with /exec.</span>';
+    return;
+  }
+  const conn = Object.assign({}, sheetConn(), { url });
+  if (!_cache.soSettings) _cache.soSettings = {};
+  _cache.soSettings['sched_sheet'] = conn;
+  await saveSoSettings('sched_sheet', conn);
+  if (msg) msg.textContent = 'Testing…';
+  try {
+    const r = await callSheetScript({ ping: true });
+    if (r.ok) { if (msg) msg.innerHTML = `<span style="color:#27ae60;">✓ Connected to "${r.sheet}".</span>`; toggleSheetSetup(false); document.getElementById('ffs-setup').style.display = 'none'; }
+    else if (msg) msg.innerHTML = `<span style="color:var(--rust);">Saved, but the sheet said: ${r.error || 'not connected'}. Make sure you pasted the latest script.</span>`;
+  } catch (e) {
+    if (msg) msg.innerHTML = `<span style="color:var(--rust);">Saved, but couldn't reach the script (${e.message}).</span>`;
+  }
+}
+async function postScheduleToSheet(overwrite) {
+  const dates = weekDates(schedWeekOffset);
+  const msg = document.getElementById('ffs-msg');
+  const conn = sheetConn();
+  if (!conn.url || !conn.secret) {
+    toggleSheetSetup(true);
+    if (msg) msg.innerHTML = '<span style="color:var(--rust);">The schedule sheet isn\'t connected yet — paste the Apps Script Web app URL below.</span>';
+    return;
+  }
+  const tab = sheetTabName(dates), label = weekRangeLabel(dates, false);
+  const cols = buildSheetMatrix(dates);
+  const rows = FFS_ROWS.map((t, r) => cols.map(cells => cells[r].map(x => x.label).join('/ ')));
+  if (!rows.some(r => r.some(Boolean))) { if (msg) msg.innerHTML = '<span style="color:var(--rust);">Nothing is scheduled for ' + label + ' yet.</span>'; return; }
+  if (!overwrite && !confirm(`Post ${label} to the Foothill Feed Schedule sheet as tab "${tab}"?`)) return;
+  if (msg) msg.textContent = 'Posting…';
+  try {
+    const r = await callSheetScript({ tabName: tab, weekStart: dateKey(dates[0]), rows, times: FFS_ROWS.map(ffsTimeLabel), overwrite: !!overwrite });
+    if (r.exists) {
+      if (confirm(`The sheet already has a "${tab}" tab. Replace its names with this schedule?`)) return postScheduleToSheet(true);
+      if (msg) msg.textContent = 'Not posted — the existing tab was left alone.';
+      return;
+    }
+    if (!r.ok) throw new Error(r.error || 'the sheet script returned an error');
+    if (msg) msg.innerHTML = `<span style="color:#27ae60;">✓ Posted as tab "${r.tabName}".</span> <a href="${r.url}" target="_blank" rel="noopener">Open sheet</a>`;
+  } catch (e) {
+    if (msg) msg.innerHTML = `<span style="color:var(--rust);">Couldn't post (${e.message}). You can still use Copy for Google Sheets.</span>`;
   }
 }
 
