@@ -243,6 +243,24 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
   .week-label { font-family:'Playfair Display',serif; font-size:18px; font-weight:400; }
   .week-btn { background:none; border:1px solid var(--border); border-radius:8px; padding:6px 14px; cursor:pointer; font-size:13px; font-family:'DM Sans',sans-serif; transition:all .15s; }
   .week-btn:hover { border-color:var(--warm); color:var(--warm); }
+  .week-nav { background:white; border:1px solid var(--border); border-radius:14px; padding:12px 14px; gap:10px; }
+  .week-center { display:flex; flex-direction:column; align-items:center; gap:4px; text-align:center; flex:1; min-width:0; }
+  .week-tag { font-size:11px; letter-spacing:1.5px; text-transform:uppercase; font-weight:600; padding:2px 10px; border-radius:20px; background:var(--light); color:#666; }
+  .week-tag.now { background:var(--sage); color:white; }
+  .week-tag.next { background:var(--gold); color:var(--dark); }
+  .week-jump { display:flex; gap:6px; }
+  .week-jump button { font-size:12px; padding:3px 10px; border-radius:6px; border:1px solid var(--border); background:var(--cream); cursor:pointer; font-family:'DM Sans',sans-serif; }
+  .week-jump button.on { border-color:var(--dark); background:var(--dark); color:var(--cream); }
+  .week-jump button { white-space:nowrap; }
+  @media (max-width:520px) {
+    .week-nav { padding:10px; }
+    .week-btn { padding:8px 12px; }
+    .week-btn .wk-txt { display:none; }
+    .week-center .week-label { font-size:16px; }
+  }
+  .autosched-week { display:inline-block; font-size:12px; font-family:'DM Sans',sans-serif; padding:2px 10px; border-radius:20px; margin-left:6px; vertical-align:middle; background:var(--light); color:#666; }
+  .autosched-week.now { background:var(--sage); color:white; }
+  .autosched-week.next { background:var(--gold); color:var(--dark); }
   .schedule-grid { width:100%; border-collapse:collapse; font-size:13px; }
   .schedule-grid th { background:var(--dark); color:var(--gold); padding:10px 8px; text-align:center; font-size:11px; letter-spacing:1px; text-transform:uppercase; font-weight:500; }
   .schedule-grid td { border:1px solid var(--border); padding:6px; vertical-align:top; min-width:90px; background:white; }
@@ -877,12 +895,19 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
 
     <!-- SCHEDULE -->
     <div class="page" id="page-schedule">
-      <div id="sched-manager-tools"></div>
       <div class="week-nav">
-        <button class="week-btn" onclick="changeWeek(-1)">← Prev</button>
-        <div class="week-label" id="week-label"></div>
-        <button class="week-btn" onclick="changeWeek(1)">Next →</button>
+        <button class="week-btn" onclick="changeWeek(-1)" title="Previous week">←<span class="wk-txt"> Prev</span></button>
+        <div class="week-center">
+          <div class="week-tag" id="week-tag"></div>
+          <div class="week-label" id="week-label"></div>
+          <div class="week-jump">
+            <button id="week-jump-0" onclick="setWeek(0)">This week</button>
+            <button id="week-jump-1" onclick="setWeek(1)">Next week</button>
+          </div>
+        </div>
+        <button class="week-btn" onclick="changeWeek(1)" title="Next week"><span class="wk-txt">Next </span>→</button>
       </div>
+      <div id="sched-manager-tools"></div>
       <div class="hours-summary" id="hours-summary"></div>
       <div style="overflow-x:auto;">
         <table class="schedule-grid" id="schedule-table"></table>
@@ -1402,7 +1427,7 @@ document.addEventListener('DOMContentLoaded', initInactivityTracker);
 // UPDATE CHECK — tells open devices when a new Hub version is live
 // Bump HUB_BUILD on every deploy.
 // ══════════════════════════════════════════
-const HUB_BUILD = '2026-10-31.5';
+const HUB_BUILD = '2026-10-31.6';
 let _hubUpdateShown = false;
 async function hubCheckForUpdate() {
   if (_hubUpdateShown) return;
@@ -5970,7 +5995,18 @@ function getWeekStart(offset) {
   return d;
 }
 
-function changeWeek(dir) { schedWeekOffset += dir; renderSchedule(); }
+function changeWeek(dir) { schedWeekOffset += dir; _autoSchedDraft = null; renderSchedule(); }
+function setWeek(offset) { schedWeekOffset = offset; _autoSchedDraft = null; renderSchedule(); }
+function weekRelLabel(offset) {
+  if (offset === 0) return 'This week';
+  if (offset === 1) return 'Next week';
+  if (offset === -1) return 'Last week';
+  return offset > 1 ? `In ${offset} weeks` : `${-offset} weeks ago`;
+}
+function weekRangeLabel(dates, withDay) {
+  const f = d => d.toLocaleDateString('en-US', withDay ? { weekday: 'short', month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric' });
+  return `${f(dates[0])} – ${f(dates[6])}`;
+}
 
 function weekDates(offset) {
   const start = getWeekStart(offset);
@@ -6065,7 +6101,12 @@ function renderSchedule() {
 
   // Week label
   const fmt = d => d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
-  document.getElementById('week-label').textContent = `${fmt(dates[0])} – ${fmt(dates[6])}`;
+  const wkRange = weekRangeLabel(dates, true), wkShort = weekRangeLabel(dates, false), wkRel = weekRelLabel(schedWeekOffset);
+  const wkCls = schedWeekOffset === 0 ? 'now' : schedWeekOffset === 1 ? 'next' : '';
+  document.getElementById('week-label').textContent = wkRange;
+  const tagEl = document.getElementById('week-tag');
+  if (tagEl) { tagEl.textContent = wkRel; tagEl.className = 'week-tag ' + wkCls; }
+  [0, 1].forEach(o => { const b = document.getElementById('week-jump-' + o); if (b) b.classList.toggle('on', schedWeekOffset === o); });
 
   // Manager tools
   const mgrEl = document.getElementById('sched-manager-tools');
@@ -6073,7 +6114,7 @@ function renderSchedule() {
     const cov = getCoverageSettings();
     mgrEl.innerHTML = `
       <div class="autosched">
-        <div class="autosched-title">⚡ Auto-Schedule This Week</div>
+        <div class="autosched-title">⚡ Auto-Schedule: ${wkShort} <span class="autosched-week ${wkCls}">${wkRel}</span></div>
         <div class="autosched-sub">Builds a draft from the store shift template, who usually works which shifts (from clock-ins), availability, hours wanted, and time off. Nothing is saved until you click Apply.</div>
         <div class="autosched-settings">
           <label class="autosched-check"><input type="checkbox" id="cov-use-tpl" ${cov.useTemplate?'checked':''} onchange="document.getElementById('cov-manual').classList.toggle('dim', this.checked)"> Use store shift template (min/peak staff below are ignored)</label>
@@ -6095,7 +6136,7 @@ function renderSchedule() {
           <label class="autosched-check"><input type="checkbox" id="cov-busy-peak" ${cov.peakBusyOnly?'checked':''}> Peak staffing only on busy days (Mon/Wed/Fri)</label>
         </div>
         <div class="btn-row">
-          <button class="btn btn-primary" onclick="runAutoSchedule()">Generate Draft</button>
+          <button class="btn btn-primary" onclick="runAutoSchedule()">Generate Draft for ${wkShort}</button>
           <button class="btn btn-outline" onclick="saveCoverageSettings()">Save These Settings</button>
         </div>
         <div id="autosched-preview"></div>
@@ -6111,7 +6152,7 @@ function renderSchedule() {
       </div>
       <div class="btn-row" style="margin-bottom:16px;">
         <button class="btn btn-gold" onclick="exportScheduleSheet()">Export to Google Sheets CSV</button>
-        <button class="btn btn-outline" onclick="clearWeekSchedule()">Clear This Week</button>
+        <button class="btn btn-outline" onclick="clearWeekSchedule()">Clear ${wkShort}</button>
       </div>`;
   } else {
     mgrEl.innerHTML = '';
@@ -6236,8 +6277,8 @@ function renderSchedule() {
 }
 
 function clearWeekSchedule() {
-  if (!confirm('Clear all shifts for this week?')) return;
   const dates = weekDates(schedWeekOffset);
+  if (!confirm(`Clear all shifts for ${weekRangeLabel(dates, true)}?`)) return;
   if (_cache.schedule) {
     dates.forEach(d => { delete _cache.schedule[dateKey(d)]; });
   }
@@ -7394,6 +7435,8 @@ function runAutoSchedule() {
   cov.template = readTemplateForm();
   const dates = weekDates(schedWeekOffset);
   _autoSchedDraft = generateWeekSchedule(dates, cov);
+  _autoSchedDraft.weekStart = dateKey(dates[0]);
+  _autoSchedDraft.weekLabel = weekRangeLabel(dates, false);
   renderAutoSchedPreview(_autoSchedDraft, cov);
 }
 
@@ -7402,7 +7445,7 @@ function renderAutoSchedPreview(draft, cov) {
   if (!el) return;
   const users = getUsers();
   const DAY = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  let html = '<div class="autosched-preview">';
+  let html = `<div class="autosched-preview"><div style="font-weight:600;margin-bottom:8px;">Draft for ${draft.weekLabel || ''}</div>`;
   let totalShifts = 0;
   draft.dayCtx.forEach(ctx => {
     const entries = Object.entries(ctx.assigned)
@@ -7442,7 +7485,7 @@ function renderAutoSchedPreview(draft, cov) {
   }
 
   html += `<div class="btn-row" style="margin-top:12px;">
-    <button class="btn btn-gold" onclick="applyAutoSchedule()">Apply ${totalShifts} Shifts to Grid</button>
+    <button class="btn btn-gold" onclick="applyAutoSchedule()">Apply ${totalShifts} Shifts to ${draft.weekLabel || 'Grid'}</button>
     <button class="btn btn-outline" onclick="runAutoSchedule()">Regenerate</button>
   </div></div>`;
   el.innerHTML = html;
@@ -7452,6 +7495,10 @@ async function applyAutoSchedule() {
   if (!_autoSchedDraft) return;
   const cov = readCoverageForm();
   const dates = weekDates(schedWeekOffset);
+  if (_autoSchedDraft.weekStart && _autoSchedDraft.weekStart !== dateKey(dates[0])) {
+    alert('This draft was made for a different week. Click Generate Draft again for ' + weekRangeLabel(dates, false) + '.');
+    _autoSchedDraft = null; renderSchedule(); return;
+  }
   if (!cov.keepExisting && weekHasShifts()) {
     if (!confirm('This will replace all shifts on the grid for this week. Continue?')) return;
   }
@@ -7472,7 +7519,7 @@ async function applyAutoSchedule() {
   _autoSchedDraft = null;
   renderSchedule();
   const el = document.getElementById('autosched-preview');
-  if (el) el.innerHTML = `<div class="autosched-preview" style="color:#27ae60;">✓ ${promises.length} entries saved to the schedule. Click any shift to fine-tune it.</div>`;
+  if (el) el.innerHTML = `<div class="autosched-preview" style="color:#27ae60;">✓ ${promises.length} entries saved to the schedule for ${weekRangeLabel(dates, false)}. Click any shift to fine-tune it.</div>`;
 }
 
 // ── TIME OFF REQUESTS ──
