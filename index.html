@@ -329,6 +329,25 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
   .autosched-field input { font-size:13px; padding:6px 8px; border:1px solid var(--border); border-radius:6px; font-family:'DM Sans',sans-serif; background:var(--cream); }
   .autosched-check { display:flex; align-items:center; gap:6px; font-size:12px; color:#555; padding-bottom:6px; }
   .autosched-check input { accent-color:var(--sage); width:15px; height:15px; }
+  .autosched-settings.dim { opacity:.45; }
+  .autosched-manual-label { width:100%; font-size:11px; letter-spacing:.5px; text-transform:uppercase; color:#999; }
+  .autosched-conflicts { margin-top:12px; padding:10px 12px; border:1px solid #e0a030; border-radius:8px; background:#fffaf0; font-size:12px; color:#7a5a10; }
+  .autosched-conflicts ul { margin:6px 0 0 18px; padding:0; }
+  .tpl-box { border:1px solid var(--border); border-radius:10px; padding:10px 14px; margin-bottom:14px; background:var(--cream); }
+  .tpl-box summary { cursor:pointer; font-weight:500; font-size:14px; }
+  .tpl-src { font-weight:400; font-size:12px; color:#888; margin-left:6px; }
+  .tpl-help { font-size:12px; color:#777; margin:8px 0 10px; }
+  .tpl-day { display:flex; gap:10px; padding:6px 0; border-top:1px solid var(--border); align-items:flex-start; }
+  .tpl-day-name { width:36px; font-size:12px; font-weight:600; color:var(--warm); text-transform:uppercase; padding-top:7px; flex-shrink:0; }
+  .tpl-slots { display:flex; flex-direction:column; gap:4px; flex:1; min-width:0; }
+  .tpl-slot { display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:12px; color:#666; }
+  .tpl-slot.opt { opacity:.6; }
+  .tpl-slot input[type=time], .tpl-slot .tpl-label { font-size:13px; padding:4px 6px; border:1px solid var(--border); border-radius:6px; font-family:'DM Sans',sans-serif; background:white; }
+  .tpl-slot .tpl-label { width:92px; }
+  .tpl-slot input[type=time] { width:104px; }
+  .tpl-slot label { display:flex; align-items:center; gap:3px; }
+  .tpl-x { background:none; border:none; color:#e07060; cursor:pointer; font-size:12px; padding:2px 6px; }
+  .tpl-add { align-self:flex-start; font-size:12px; color:var(--warm); cursor:pointer; background:none; border:1px dashed var(--border); border-radius:6px; padding:3px 10px; font-family:'DM Sans',sans-serif; }
   .autosched-preview { background:var(--cream); border-radius:10px; padding:14px 16px; margin-top:12px; font-size:13px; line-height:1.6; }
   .autosched-day { margin-bottom:8px; }
   .autosched-day b { display:block; font-size:12px; letter-spacing:.5px; text-transform:uppercase; color:var(--warm); }
@@ -1383,7 +1402,7 @@ document.addEventListener('DOMContentLoaded', initInactivityTracker);
 // UPDATE CHECK — tells open devices when a new Hub version is live
 // Bump HUB_BUILD on every deploy.
 // ══════════════════════════════════════════
-const HUB_BUILD = '2026-10-31.3';
+const HUB_BUILD = '2026-10-31.4';
 let _hubUpdateShown = false;
 async function hubCheckForUpdate() {
   if (_hubUpdateShown) return;
@@ -6040,19 +6059,25 @@ function renderSchedule() {
     mgrEl.innerHTML = `
       <div class="autosched">
         <div class="autosched-title">⚡ Auto-Schedule This Week</div>
-        <div class="autosched-sub">Builds a draft from each person's availability, hours wanted, and time off (set on the Availability page). Nothing is saved until you click Apply.</div>
+        <div class="autosched-sub">Builds a draft from the store shift template, who usually works which shifts (from clock-ins), availability, hours wanted, and time off. Nothing is saved until you click Apply.</div>
         <div class="autosched-settings">
+          <label class="autosched-check"><input type="checkbox" id="cov-use-tpl" ${cov.useTemplate?'checked':''} onchange="document.getElementById('cov-manual').classList.toggle('dim', this.checked)"> Use store shift template (min/peak staff below are ignored)</label>
+          <label class="autosched-check"><input type="checkbox" id="cov-learned" ${cov.useLearned?'checked':''}> Aim for each person's usual hours when Hrs/wk isn't set</label>
+          <label class="autosched-check"><input type="checkbox" id="cov-fill-target" ${cov.fillToTarget?'checked':''}> Add shifts to reach hours wanted, even past coverage</label>
+          <label class="autosched-check"><input type="checkbox" id="cov-keep" ${cov.keepExisting?'checked':''}> Keep shifts already on the grid</label>
+          <div class="autosched-field"><label>Min shift (h)</label><input type="number" id="cov-min-shift" min="2" max="8" step="0.5" value="${cov.minShift}"></div>
+          <div class="autosched-field"><label>Max shift (h)</label><input type="number" id="cov-max-shift" min="4" max="10" step="0.5" value="${cov.maxShift}"></div>
+        </div>
+        <div id="tpl-wrap">${tplEditorHtml()}</div>
+        <div class="autosched-settings${cov.useTemplate ? ' dim' : ''}" id="cov-manual">
+          <div class="autosched-manual-label">Simple coverage (used only when the template is off)</div>
           <div class="autosched-field"><label>Weekday min staff</label><input type="number" id="cov-wd-min" min="1" max="6" value="${cov.weekdayMin}"></div>
           <div class="autosched-field"><label>Weekday peak staff</label><input type="number" id="cov-wd-peak" min="1" max="6" value="${cov.weekdayPeak}"></div>
           <div class="autosched-field"><label>Peak from</label><input type="time" id="cov-peak-start" value="${cov.peakStart}"></div>
           <div class="autosched-field"><label>Peak to</label><input type="time" id="cov-peak-end" value="${cov.peakEnd}"></div>
           <div class="autosched-field"><label>Weekend min</label><input type="number" id="cov-we-min" min="1" max="6" value="${cov.weekendMin}"></div>
           <div class="autosched-field"><label>Weekend peak</label><input type="number" id="cov-we-peak" min="1" max="6" value="${cov.weekendPeak}"></div>
-          <div class="autosched-field"><label>Min shift (h)</label><input type="number" id="cov-min-shift" min="2" max="8" step="0.5" value="${cov.minShift}"></div>
-          <div class="autosched-field"><label>Max shift (h)</label><input type="number" id="cov-max-shift" min="4" max="10" step="0.5" value="${cov.maxShift}"></div>
           <label class="autosched-check"><input type="checkbox" id="cov-busy-peak" ${cov.peakBusyOnly?'checked':''}> Peak staffing only on busy days (Mon/Wed/Fri)</label>
-          <label class="autosched-check"><input type="checkbox" id="cov-fill-target" ${cov.fillToTarget?'checked':''}> Add shifts to reach hours wanted, even past coverage</label>
-          <label class="autosched-check"><input type="checkbox" id="cov-keep" ${cov.keepExisting?'checked':''}> Keep shifts already on the grid</label>
         </div>
         <div class="btn-row">
           <button class="btn btn-primary" onclick="runAutoSchedule()">Generate Draft</button>
@@ -6695,7 +6720,8 @@ const SCHED_DEFAULT_COVERAGE = {
   weekdayMin: 2, weekdayPeak: 3, peakStart: '10:00', peakEnd: '15:00',
   weekendMin: 2, weekendPeak: 3,
   minShift: 4, maxShift: 8.5,
-  peakBusyOnly: true, fillToTarget: true, keepExisting: true
+  peakBusyOnly: true, fillToTarget: true, keepExisting: true,
+  useTemplate: true, useLearned: true
 };
 const SCHED_BUSY_DAYS = [1, 3, 5]; // Mon, Wed, Fri
 const SLOT = 30; // minutes
@@ -6715,7 +6741,8 @@ function readCoverageForm() {
     weekendMin: num('cov-we-min', d.weekendMin), weekendPeak: num('cov-we-peak', d.weekendPeak),
     minShift: num('cov-min-shift', d.minShift), maxShift: num('cov-max-shift', d.maxShift),
     peakBusyOnly: chk('cov-busy-peak', d.peakBusyOnly), fillToTarget: chk('cov-fill-target', d.fillToTarget),
-    keepExisting: chk('cov-keep', d.keepExisting)
+    keepExisting: chk('cov-keep', d.keepExisting),
+    useTemplate: chk('cov-use-tpl', d.useTemplate), useLearned: chk('cov-learned', d.useLearned)
   };
 }
 
@@ -6732,11 +6759,18 @@ function toMin(t) { const [h, m] = t.split(':').map(Number); return h * 60 + m; 
 function fromMin(m) { return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); }
 
 // Build per-day requirement curve and initial coverage
-function buildDayContext(d, cov, keepExisting, empIds) {
+function buildDayContext(d, cov, keepExisting, empIds, tpl) {
   const dow = d.getDay();
   const hours = STORE_HOURS[dow];
   if (!hours) return null;
-  const open = toMin(hours.open), close = toMin(hours.close);
+  const tSlots = (tpl && tpl.days[dow]) || [];
+  const tReq = tSlots.filter(s => !s.optional);
+  // With a template, the day runs from the earliest template shift (e.g. 7:30 pre-open) to the latest
+  let open = toMin(hours.open), close = toMin(hours.close);
+  if (tReq.length) {
+    open = Math.min(open, ...tReq.map(s => toMin(s.start)));
+    close = Math.max(close, ...tReq.map(s => toMin(s.end)));
+  }
   const nSlots = Math.ceil((close - open) / SLOT);
   const isWeekend = dow === 0 || dow === 6;
   const usePeak = isWeekend ? true : (!cov.peakBusyOnly || SCHED_BUSY_DAYS.includes(dow));
@@ -6746,7 +6780,8 @@ function buildDayContext(d, cov, keepExisting, empIds) {
   const required = [], coverage = [];
   for (let i = 0; i < nSlots; i++) {
     const t = open + i * SLOT;
-    required.push(usePeak && t >= pS && t < pE ? Math.max(minStaff, peakStaff) : minStaff);
+    if (tReq.length) required.push(tReq.filter(s => t >= toMin(s.start) && t < toMin(s.end)).length);
+    else required.push(usePeak && t >= pS && t < pE ? Math.max(minStaff, peakStaff) : minStaff);
     coverage.push(0);
   }
   const dStr = dateKey(d);
@@ -6790,7 +6825,7 @@ function availWindow(uid, ctx) {
 }
 
 // Score one candidate shift for uid on ctx
-function scoreShift(uid, ctx, sMin, eMin, state, cov) {
+function scoreShift(uid, ctx, sMin, eMin, state, cov, learned) {
   const pref = getStaffPrefs(uid);
   // deficitCovered sums the *depth* of the shortage in each covered slot, so a
   // shift that fills a 2-person hole outranks one that fills a 1-person hole.
@@ -6803,7 +6838,7 @@ function scoreShift(uid, ctx, sMin, eMin, state, cov) {
   }
   const shiftHrs = (eMin - sMin) / 60;
   const hoursSoFar = state.hours[uid] || 0;
-  const target = pref.targetHours;
+  const target = effTargetHours(uid, cov, learned);
   let score = deficitCovered * 1.0 - overCovered * 0.45;
 
   // Hours-wanted pressure: people furthest below target get priority
@@ -6833,7 +6868,9 @@ function scoreShift(uid, ctx, sMin, eMin, state, cov) {
 function generateWeekSchedule(dates, cov) {
   const users = getUsers();
   const empIds = Object.keys(users).filter(uid => users[uid] && users[uid].active !== false);
-  const days = dates.map(d => buildDayContext(d, cov, cov.keepExisting, empIds)).filter(Boolean);
+  const tpl = cov.useTemplate ? (cov.template || getSchedTemplate()) : null;
+  const days = dates.map(d => buildDayContext(d, cov, cov.keepExisting, empIds, tpl)).filter(Boolean);
+  const learned = learnStaffPatterns(((tpl && tpl.exclude) || SCHED_DEFAULT_TEMPLATE.exclude));
   const state = { hours: {}, days: {} };
   // Seed with kept shifts
   days.forEach(ctx => Object.entries(ctx.assigned).forEach(([uid, shifts]) => {
@@ -6843,6 +6880,11 @@ function generateWeekSchedule(dates, cov) {
 
   const minLen = Math.round(cov.minShift * 60 / SLOT) * SLOT;
   const maxLen = Math.round(cov.maxShift * 60 / SLOT) * SLOT;
+
+  // Template pass: fill the store's standard shifts first
+  if (tpl) assignTemplateSlots(days, state, cov, empIds, tpl, learned, false);
+
+  if (tpl && cov.fillToTarget) assignTemplateSlots(days, state, cov, empIds, tpl, learned, true);
 
   for (let iter = 0; iter < 200; iter++) {
     const anyDeficit = days.some(dayDeficit);
@@ -6854,14 +6896,15 @@ function generateWeekSchedule(dates, cov) {
         if (ctx.assigned[uid]) return; // one shift per day
         const pref = getStaffPrefs(uid);
         if ((state.days[uid] || 0) >= pref.maxDays) return;
-        if (!deficit && (pref.targetHours <= 0 || (state.hours[uid] || 0) >= pref.targetHours - 0.5)) return;
+        const tgt = effTargetHours(uid, cov, learned);
+        if (!deficit && (tgt <= 0 || (state.hours[uid] || 0) >= tgt - 0.5)) return;
         if (!deficit && pref.fillOnly) return;
         const w = availWindow(uid, ctx);
         if (!w) return;
         // Cap so we don't blow past target hours when filling
         let lenCap = maxLen;
-        if (pref.targetHours > 0) {
-          const remaining = Math.max(minLen, Math.round((pref.targetHours - (state.hours[uid] || 0)) * 60 / SLOT) * SLOT);
+        if (tgt > 0) {
+          const remaining = Math.max(minLen, Math.round((tgt - (state.hours[uid] || 0)) * 60 / SLOT) * SLOT);
           if (!deficit) lenCap = Math.min(maxLen, remaining);
         }
         // If someone's availability window is shorter than the min shift, allow a shift that fills the window
@@ -6869,7 +6912,7 @@ function generateWeekSchedule(dates, cov) {
         for (let s = w.s; s + effMin <= w.e; s += SLOT) {
           for (let len = effMin; len <= lenCap && s + len <= w.e; len += SLOT) {
             const e = s + len;
-            const r = scoreShift(uid, ctx, s, e, state, cov);
+            const r = scoreShift(uid, ctx, s, e, state, cov, learned);
             if (deficit && r.deficitSlots === 0) continue;
             // Coverage holes come first: a shift that plugs a real hole gets a +6 priority
             // and is worth taking even at a modest negative raw score (e.g. a fill-in-only
@@ -6937,15 +6980,303 @@ function generateWeekSchedule(dates, cov) {
         else { if (cur) ranges.push(cur); cur = { s: t, e: t + SLOT, short }; }
       } else if (cur) { ranges.push(cur); cur = null; }
     }
-    if (ranges.length) gaps.push({ dStr: ctx.dStr, dow: ctx.dow, ranges });
+    const unfilled = tpl ? (tpl.days[ctx.dow] || []).map((s, i) => ({ s, i }))
+      .filter(x => !x.s.optional && !(ctx.slotFill && ctx.slotFill[x.i])).map(x => x.s) : [];
+    if (ranges.length || unfilled.length) gaps.push({ dStr: ctx.dStr, dow: ctx.dow, ranges, unfilled });
   });
-  return { result, gaps, hours: state.hours, days: state.days, dayCtx: days, empIds };
+  const conflicts = availabilityConflicts(learned, empIds);
+  return { result, gaps, hours: state.hours, days: state.days, dayCtx: days, empIds, learned, conflicts, tpl };
 }
+
+// ── STORE SHIFT TEMPLATE ──
+// The auto-scheduler fills these named shifts first (built from real clock-in data),
+// then tops up any coverage holes and hours-wanted the usual way.
+// Saved in ff_so_settings under key sched_template. Days keyed by JS weekday (0=Sun).
+const SCHED_DEFAULT_TEMPLATE = {"source":"Clock-ins Sep 20 \u2013 Oct 31 (excl. Wendy, Mike)","exclude":["wendy","mike"],"weeks":6,"days":{"0":[{"label":"Opener","start":"09:00","end":"17:00","optional":false},{"label":"Opener","start":"09:00","end":"17:00","optional":false},{"label":"Closer","start":"10:00","end":"17:00","optional":false}],"1":[{"label":"Opener","start":"07:30","end":"13:30","optional":false},{"label":"Mid","start":"09:00","end":"16:30","optional":false},{"label":"Closer","start":"11:00","end":"18:30","optional":false},{"label":"PM closer","start":"14:00","end":"18:30","optional":false}],"2":[{"label":"Opener","start":"07:30","end":"14:00","optional":false},{"label":"Mid","start":"09:00","end":"14:30","optional":false},{"label":"Closer","start":"10:00","end":"18:30","optional":false},{"label":"PM closer","start":"14:00","end":"18:30","optional":false}],"3":[{"label":"Opener","start":"07:30","end":"14:00","optional":false},{"label":"Mid","start":"09:00","end":"17:30","optional":false},{"label":"Closer","start":"10:00","end":"18:30","optional":false},{"label":"PM closer","start":"14:00","end":"18:30","optional":false}],"4":[{"label":"Opener","start":"07:30","end":"15:30","optional":false},{"label":"Mid","start":"09:00","end":"14:30","optional":false},{"label":"Closer","start":"10:00","end":"18:30","optional":false},{"label":"PM closer","start":"14:00","end":"18:30","optional":false}],"5":[{"label":"Opener","start":"07:30","end":"16:00","optional":false},{"label":"Mid","start":"09:00","end":"17:00","optional":false},{"label":"Closer","start":"10:00","end":"18:30","optional":false},{"label":"PM closer","start":"16:00","end":"18:30","optional":false}],"6":[{"label":"Opener","start":"09:00","end":"18:00","optional":false},{"label":"Opener","start":"09:00","end":"18:00","optional":false},{"label":"Closer","start":"10:00","end":"18:00","optional":false}]}};
+const SCHED_LEARN_WEEKS = 8;
+
+function getSchedTemplate() {
+  const t = (_cache.soSettings || {})['sched_template'];
+  return t && t.days ? t : JSON.parse(JSON.stringify(SCHED_DEFAULT_TEMPLATE));
+}
+
+// Clean clock entries in a date window: finished shifts of 45min–12h, minus excluded people
+function schedClockRows(sinceStr, untilStr, exclude) {
+  const ex = new Set(exclude || []);
+  return (_cache.timeEntries || []).filter(e => {
+    if (!e.clockIn || !e.clockOut || ex.has(e.uid)) return false;
+    if (e.date < sinceStr || e.date >= untilStr) return false;
+    const mins = (new Date(e.clockOut) - new Date(e.clockIn)) / 60000;
+    return mins >= 45 && mins <= 720;
+  }).map(e => {
+    const ci = new Date(e.clockIn), co = new Date(e.clockOut);
+    return { uid: e.uid, date: e.date, dow: new Date(e.date + 'T12:00:00').getDay(),
+      s: ci.getHours() * 60 + ci.getMinutes(), e: co.getHours() * 60 + co.getMinutes(),
+      paid: e.totalMinutes || 0 };
+  });
+}
+
+function schedMedian(a) { const s = [...a].sort((x, y) => x - y); const n = s.length; return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : 0; }
+function schedRound30(m) { return Math.round(m / 30) * 30; }
+
+// Rebuild the template from the last N weeks of clock-ins. For each weekday it takes the usual
+// headcount, groups that day's shifts into that many clusters by start/end time (k-medians),
+// and turns each cluster into a named shift. Clusters seen on under half the days become optional.
+function buildTemplateFromClock(weeks, exclude) {
+  const until = dateKey(new Date());
+  const since = dateKey(new Date(Date.now() - weeks * 7 * 86400000));
+  const rows = schedClockRows(since, until, exclude);
+  const days = {};
+  for (let dow = 0; dow < 7; dow++) {
+    const byDate = {};
+    rows.filter(r => r.dow === dow).forEach(r => { (byDate[r.date] = byDate[r.date] || []).push(r); });
+    const dates = Object.keys(byDate);
+    if (!dates.length) { days[dow] = []; continue; }
+    const counts = dates.map(d => byDate[d].length);
+    const k = Math.max(1, Math.round(schedMedian(counts)));
+    const pts = dates.flatMap(d => byDate[d]);
+    // init centers from start-time quantiles
+    const sorted = [...pts].sort((a, b) => a.s - b.s || a.e - b.e);
+    let centers = Array.from({ length: k }, (_, i) => { const p = sorted[Math.floor((i + 0.5) * sorted.length / k)]; return { s: p.s, e: p.e }; });
+    let groups = [];
+    for (let it = 0; it < 15; it++) {
+      groups = centers.map(() => []);
+      pts.forEach(p => {
+        let bi = 0, bd = Infinity;
+        centers.forEach((c, i) => { const d = Math.abs(p.s - c.s) + Math.abs(p.e - c.e); if (d < bd) { bd = d; bi = i; } });
+        groups[bi].push(p);
+      });
+      centers = groups.map((g, i) => g.length ? { s: schedMedian(g.map(p => p.s)), e: schedMedian(g.map(p => p.e)) } : centers[i]);
+    }
+    const slots = groups.map((g, i) => {
+      const freq = new Set(g.map(p => p.date)).size / dates.length;
+      return { start: fromMin(schedRound30(centers[i].s)), end: fromMin(schedRound30(centers[i].e)), freq, n: g.length };
+    }).filter(sl => sl.n > 0 && toMin(sl.end) - toMin(sl.start) >= 120)
+      .sort((a, b) => toMin(a.start) - toMin(b.start) || toMin(a.end) - toMin(b.end));
+    const first = Math.min(...slots.map(s => toMin(s.start)));
+    const last = Math.max(...slots.map(s => toMin(s.end)));
+    days[dow] = slots.map(sl => ({
+      label: toMin(sl.start) === first ? 'Opener' : toMin(sl.end) === last ? (toMin(sl.start) >= 13 * 60 ? 'PM closer' : 'Closer') : 'Mid',
+      start: sl.start, end: sl.end, optional: sl.freq < 0.5
+    }));
+  }
+  const fmt = s => new Date(s + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const names = (exclude || []).map(u => getUsers()[u]?.name || (_cache.allUsers || {})[u]?.name || u);
+  return { source: `Clock-ins ${fmt(since)} – ${fmt(dateKey(new Date(Date.now() - 86400000)))}` + (names.length ? ` (excl. ${names.join(', ')})` : ''),
+    exclude: exclude || [], weeks, days };
+}
+
+// Each person's usual pattern from the last SCHED_LEARN_WEEKS weeks of clock-ins:
+// how often they work each weekday, their usual start/end that day, usual weekly hours, open/close rate.
+function learnStaffPatterns(exclude) {
+  const until = dateKey(new Date());
+  const since = dateKey(new Date(Date.now() - SCHED_LEARN_WEEKS * 7 * 86400000));
+  const rows = schedClockRows(since, until, exclude);
+  const allDates = new Set(rows.map(r => r.date));
+  const dowWeeks = [0, 0, 0, 0, 0, 0, 0];
+  [...allDates].forEach(d => dowWeeks[new Date(d + 'T12:00:00').getDay()]++);
+  const dayFirst = {}, dayLast = {};
+  rows.forEach(r => {
+    dayFirst[r.date] = Math.min(dayFirst[r.date] ?? 9999, r.s);
+    dayLast[r.date] = Math.max(dayLast[r.date] ?? 0, r.e);
+  });
+  const out = {};
+  const by = {};
+  rows.forEach(r => (by[r.uid] = by[r.uid] || []).push(r));
+  Object.entries(by).forEach(([uid, rs]) => {
+    const weeksSeen = new Set(rs.map(r => { const d = new Date(r.date + 'T12:00:00'); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return dateKey(d); }));
+    // clock-in to clock-out span (meal breaks included) so it compares with scheduled shift lengths
+    const p = { shifts: rs.length, weeklyHours: rs.reduce((a, r) => a + (r.e - r.s), 0) / 60 / Math.max(1, weeksSeen.size),
+      opens: rs.filter(r => r.s <= dayFirst[r.date] + 15).length, closes: rs.filter(r => r.e >= dayLast[r.date] - 15).length,
+      lastDate: rs.reduce((a, r) => r.date > a ? r.date : a, ''), dow: {} };
+    for (let dow = 0; dow < 7; dow++) {
+      const d = rs.filter(r => r.dow === dow);
+      if (!d.length) continue;
+      p.dow[dow] = { freq: Math.min(1, d.length / Math.max(1, dowWeeks[dow])), n: d.length,
+        s: schedMedian(d.map(r => r.s)), e: schedMedian(d.map(r => r.e)) };
+    }
+    out[uid] = p;
+  });
+  return out;
+}
+
+// Things in the saved availability / prefs that contradict what people actually work
+function availabilityConflicts(learned, empIds) {
+  const users = getUsers();
+  const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const out = [];
+  empIds.forEach(uid => {
+    const L = learned[uid];
+    if (!L || L.shifts < 3) return;
+    const name = users[uid]?.name || uid;
+    const pref = getStaffPrefs(uid);
+    for (let dow = 0; dow < 7; dow++) {
+      const d = L.dow[dow];
+      if (!d || d.freq < 0.5 || d.n < 2) continue;
+      const a = getAvailNote(uid, dow);
+      if (a.available === false) out.push(`${name} has worked ${DAY[dow]} ${d.n}× recently (usually ${fmtTime12(fromMin(Math.round(d.s)))}–${fmtTime12(fromMin(Math.round(d.e)))}) but is marked unavailable ${DAY[dow]}.`);
+      else if (a.earliest && toMin(a.earliest) > d.s + 30) out.push(`${name} usually starts ${DAY[dow]} at ${fmtTime12(fromMin(Math.round(d.s)))}, but availability says ${a.note || 'after ' + fmtTime12(a.earliest)}.`);
+      else if (a.latest && toMin(a.latest) < d.e - 30) out.push(`${name} usually works ${DAY[dow]} until ${fmtTime12(fromMin(Math.round(d.e)))}, but availability says ${a.note || 'until ' + fmtTime12(a.latest)}.`);
+    }
+    const quietDays = Math.round((Date.now() - new Date(L.lastDate + 'T12:00:00')) / 86400000);
+    if (quietDays >= 14) out.push(`${name} hasn't clocked in since ${new Date(L.lastDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} — if they're no longer working, mark them inactive so they aren't scheduled.`);
+    if (!pref.canClose && L.closes >= Math.max(3, L.shifts * 0.4)) out.push(`${name} closed ${L.closes} of ${L.shifts} recent shifts, but "Close" is unchecked.`);
+    if (!pref.canOpen && L.opens >= Math.max(3, L.shifts * 0.4)) out.push(`${name} opened ${L.opens} of ${L.shifts} recent shifts, but "Open" is unchecked.`);
+  });
+  return out;
+}
+
+// Hours to aim for: Hrs/wk when set, otherwise (if enabled) their usual recent weekly hours
+function effTargetHours(uid, cov, learned) {
+  const t = getStaffPrefs(uid).targetHours;
+  if (t > 0) return t;
+  if (cov.useLearned && learned && learned[uid] && learned[uid].shifts >= 4) return Math.round(learned[uid].weeklyHours);
+  return 0;
+}
+
+// Score a person for one template shift on one day. Returns null if they can't take it.
+function scoreTemplateSlot(uid, ctx, slot, state, cov, learned) {
+  if (ctx.assigned[uid]) return null;
+  const pref = getStaffPrefs(uid);
+  if ((state.days[uid] || 0) >= pref.maxDays) return null;
+  const w = availWindow(uid, ctx);
+  if (!w) return null;
+  const sS = toMin(slot.start), sE = toMin(slot.end);
+  const s = Math.max(sS, w.s), e = Math.min(sE, w.e);
+  const len = e - s, slotLen = sE - sS;
+  // must cover most of the shift (they can be trimmed to availability, holes get topped up later)
+  if (len < Math.min(slotLen, Math.max(120, slotLen * 0.6))) return null;
+  const isOpen = sS === ctx.open, isClose = sE === ctx.close;
+  if ((isOpen && !pref.canOpen) || (isClose && !pref.canClose)) return null;
+  let score = 0;
+  score += (len / slotLen) * 2;                        // covers the whole shift
+  const L = learned[uid], d = L && L.dow[ctx.dow];
+  if (d) {
+    score += d.freq * 4;                               // usually works this weekday
+    const diff = (Math.abs(d.s - sS) + Math.abs(d.e - sE)) / 60;
+    score += Math.max(0, 3 - diff) * d.freq;           // usually works this kind of shift
+  } else if (L) score -= 1;                            // has history, never this weekday
+  const target = effTargetHours(uid, cov, learned);
+  const hrs = state.hours[uid] || 0, add = len / 60;
+  if (target > 0) {
+    score += Math.max(0, (target - hrs) / target) * 3;
+    const over = hrs + add - target;
+    if (over > 0) score -= over * 0.8;
+  }
+  if (pref.fillOnly) score -= 8;
+  return { uid, s, e, score };
+}
+
+// Fill the template's shifts across the whole week, best match first.
+// Shifts with only one or two possible people are handled before flexible ones.
+function assignTemplateSlots(days, state, cov, empIds, tpl, learned, includeOptional) {
+  const open = [];
+  days.forEach(ctx => (tpl.days[ctx.dow] || []).forEach((slot, i) => {
+    if (!!slot.optional !== !!includeOptional) return;
+    if (ctx.slotFill && ctx.slotFill[i]) return;
+    open.push({ ctx, slot, i });
+  }));
+  // Kept shifts already on the grid count toward matching template shifts
+  open.slice().forEach(o => {
+    const sS = toMin(o.slot.start), sE = toMin(o.slot.end);
+    const hit = Object.entries(o.ctx.assigned).find(([uid, sh]) => !o.ctx.slotOwner?.[uid] &&
+      Math.abs(toMin(sh[0].start) - sS) <= 60 && Math.abs(toMin(sh[0].end) - sE) <= 60);
+    if (hit) {
+      o.ctx.slotFill = o.ctx.slotFill || {}; o.ctx.slotOwner = o.ctx.slotOwner || {};
+      o.ctx.slotFill[o.i] = hit[0]; o.ctx.slotOwner[hit[0]] = o.i;
+      open.splice(open.indexOf(o), 1);
+    }
+  });
+  while (open.length) {
+    let best = null;
+    open.forEach(o => {
+      const cands = empIds.map(uid => scoreTemplateSlot(uid, o.ctx, o.slot, state, cov, learned)).filter(Boolean);
+      if (!cands.length) return;
+      cands.sort((a, b) => b.score - a.score);
+      const top = cands[0];
+      if (includeOptional) {
+        const t = effTargetHours(top.uid, cov, learned);
+        if (!t || (state.hours[top.uid] || 0) + (top.e - top.s) / 60 > t + 1) return;
+      }
+      const rank = top.score + (cands.length === 1 ? 4 : cands.length === 2 ? 1.5 : 0);
+      if (!best || rank > best.rank) best = { o, c: top, rank };
+    });
+    if (!best) break;
+    const { o, c } = best;
+    o.ctx.assigned[c.uid] = [{ start: fromMin(c.s), end: fromMin(c.e), note: o.slot.label || '' }];
+    addCoverage(o.ctx.coverage, o.ctx.open, c.s, c.e);
+    o.ctx.slotFill = o.ctx.slotFill || {}; o.ctx.slotOwner = o.ctx.slotOwner || {};
+    o.ctx.slotFill[o.i] = c.uid; o.ctx.slotOwner[c.uid] = o.i;
+    state.hours[c.uid] = (state.hours[c.uid] || 0) + (c.e - c.s) / 60;
+    state.days[c.uid] = (state.days[c.uid] || 0) + 1;
+    open.splice(open.indexOf(o), 1);
+  }
+}
+
+// ── Template editor (inside the Auto-Schedule panel) ──
+let _tplDraft = null;
+function tplEditorHtml() {
+  if (!_tplDraft) _tplDraft = getSchedTemplate();
+  const t = _tplDraft;
+  const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const order = [1, 2, 3, 4, 5, 6, 0];
+  let totalH = 0;
+  const rows = order.map(dow => {
+    const slots = t.days[dow] || [];
+    slots.forEach(s => { if (!s.optional) totalH += shiftMins(s.start, s.end) / 60; });
+    return `<div class="tpl-day"><div class="tpl-day-name">${DAY[dow]}</div><div class="tpl-slots">` +
+      slots.map((s, i) => `<div class="tpl-slot${s.optional ? ' opt' : ''}">
+        <input class="tpl-label" value="${(s.label || '').replace(/"/g, '&quot;')}" onchange="tplEdit(${dow},${i},'label',this.value)">
+        <input type="time" value="${s.start}" onchange="tplEdit(${dow},${i},'start',this.value)">
+        <span>–</span>
+        <input type="time" value="${s.end}" onchange="tplEdit(${dow},${i},'end',this.value)">
+        <label title="Only filled if someone wants more hours"><input type="checkbox" ${s.optional ? 'checked' : ''} onchange="tplEdit(${dow},${i},'optional',this.checked)"> optional</label>
+        <button class="tpl-x" onclick="tplRemove(${dow},${i})" title="Remove">✕</button></div>`).join('') +
+      `<button class="tpl-add" onclick="tplAdd(${dow})">+ shift</button></div></div>`;
+  }).join('');
+  return `<details class="tpl-box" id="tpl-box" ${t._open ? 'open' : ''} ontoggle="_tplDraft._open=this.open">
+    <summary>Store shift template <span class="tpl-src">${t.source || ''} · ${totalH.toFixed(0)} scheduled hrs/wk before meal breaks</span></summary>
+    <div class="tpl-help">The draft fills these shifts first — matching people to the shifts they usually work — then covers any holes and hours wanted. Edits apply to the next draft; click Save Template to keep them.</div>
+    ${rows}
+    <div class="btn-row" style="margin-top:10px;">
+      <button class="btn btn-outline" onclick="saveSchedTemplate()">Save Template</button>
+      <button class="btn btn-outline" onclick="rebuildTemplateFromClock()">Rebuild from last 6 weeks of clock-ins</button>
+      <button class="btn btn-outline" onclick="resetSchedTemplate()">Reset to default</button>
+    </div><div id="tpl-msg" style="font-size:12px;margin-top:6px;"></div></details>`;
+}
+function tplRerender() { const el = document.getElementById('tpl-wrap'); if (el) el.innerHTML = tplEditorHtml(); }
+function tplEdit(dow, i, field, val) { _tplDraft.days[dow][i][field] = val; if (field !== 'label') tplRerender(); }
+function tplRemove(dow, i) { _tplDraft.days[dow].splice(i, 1); tplRerender(); }
+function tplAdd(dow) {
+  const h = STORE_HOURS[dow] || { open: '09:00', close: '17:00' };
+  (_tplDraft.days[dow] = _tplDraft.days[dow] || []).push({ label: 'Mid', start: h.open, end: fromMin(Math.min(toMin(h.close), toMin(h.open) + 480)), optional: false });
+  tplRerender();
+}
+async function saveSchedTemplate() {
+  const t = JSON.parse(JSON.stringify(_tplDraft)); delete t._open;
+  for (const slots of Object.values(t.days)) for (const s of slots) {
+    if (!s.start || !s.end || toMin(s.end) <= toMin(s.start)) { document.getElementById('tpl-msg').innerHTML = `<span style="color:var(--rust);">A shift ends before it starts (${s.label || 'unnamed'}) — fix it before saving.</span>`; return; }
+  }
+  if (!_cache.soSettings) _cache.soSettings = {};
+  _cache.soSettings['sched_template'] = t;
+  await saveSoSettings('sched_template', t);
+  document.getElementById('tpl-msg').innerHTML = '<span style="color:#27ae60;">✓ Template saved.</span>';
+}
+function rebuildTemplateFromClock() {
+  const ex = (_tplDraft && _tplDraft.exclude) || SCHED_DEFAULT_TEMPLATE.exclude;
+  const t = buildTemplateFromClock(6, ex);
+  if (!Object.values(t.days).some(d => d.length)) { document.getElementById('tpl-msg').textContent = 'Not enough clock-ins in the last 6 weeks to build from.'; return; }
+  t._open = true; _tplDraft = t; tplRerender();
+  document.getElementById('tpl-msg').innerHTML = 'Rebuilt from recent clock-ins — review it, then Save Template to keep it.';
+}
+function resetSchedTemplate() { _tplDraft = JSON.parse(JSON.stringify(SCHED_DEFAULT_TEMPLATE)); _tplDraft._open = true; tplRerender(); }
+function readTemplateForm() { const t = JSON.parse(JSON.stringify(_tplDraft || getSchedTemplate())); delete t._open; return t; }
 
 let _autoSchedDraft = null;
 
 function runAutoSchedule() {
   const cov = readCoverageForm();
+  cov.template = readTemplateForm();
   const dates = weekDates(schedWeekOffset);
   _autoSchedDraft = generateWeekSchedule(dates, cov);
   renderAutoSchedPreview(_autoSchedDraft, cov);
@@ -6964,10 +7295,12 @@ function renderAutoSchedPreview(draft, cov) {
       .sort((a, b) => a.start - b.start);
     totalShifts += entries.length;
     const line = entries.length
-      ? entries.map(x => `<span style="white-space:nowrap;">${users[x.uid]?.name || x.uid} <span style="color:#666;">${x.shifts.map(s => fmtTime12(s.start) + '–' + fmtTime12(s.end)).join(' / ')}</span></span>`).join(', ')
+      ? entries.map(x => `<span style="white-space:nowrap;">${users[x.uid]?.name || x.uid} <span style="color:#666;">${x.shifts.map(s => fmtTime12(s.start) + '–' + fmtTime12(s.end) + (s.note ? ` <i style="color:#999;">${s.note}</i>` : '')).join(' / ')}</span></span>`).join(', ')
       : '<span style="color:#aaa;">nobody scheduled</span>';
     const gap = draft.gaps.find(g => g.dStr === ctx.dStr);
-    const gapHtml = gap ? `<div class="autosched-gap">⚠ Short ${gap.ranges.map(r => `${r.short} ${fmtTime12(fromMin(r.s))}–${fmtTime12(fromMin(r.e))}`).join(', ')}</div>` : '';
+    let gapHtml = '';
+    if (gap && gap.unfilled && gap.unfilled.length) gapHtml += `<div class="autosched-gap">⚠ Nobody available for: ${gap.unfilled.map(s => `${s.label || 'shift'} ${fmtTime12(s.start)}–${fmtTime12(s.end)}`).join(', ')}</div>`;
+    if (gap && gap.ranges.length) gapHtml += `<div class="autosched-gap">⚠ Short ${gap.ranges.map(r => `${r.short} ${fmtTime12(fromMin(r.s))}–${fmtTime12(fromMin(r.e))}`).join(', ')}</div>`;
     html += `<div class="autosched-day"><b>${DAY[ctx.dow]} ${ctx.d.getMonth()+1}/${ctx.d.getDate()}</b>${line}${gapHtml}</div>`;
   });
 
@@ -6976,14 +7309,18 @@ function renderAutoSchedPreview(draft, cov) {
   draft.empIds.forEach(uid => {
     const p = getStaffPrefs(uid);
     const h = draft.hours[uid] || 0;
-    if (!h && !p.targetHours) return;
-    const cls = p.targetHours > 0 ? (h < p.targetHours - 2 ? 'under' : h > p.targetHours + 2 ? 'over' : '') : '';
-    html += `<div class="hours-chip ${cls}">${users[uid]?.name}: <strong>${h.toFixed(1)}h</strong>${p.targetHours ? ` <span style="color:#888;">/ ${p.targetHours}h wanted</span>` : ''}</div>`;
+    const tgt = effTargetHours(uid, cov, draft.learned);
+    if (!h && !tgt) return;
+    const cls = tgt > 0 ? (h < tgt - 2 ? 'under' : h > tgt + 2 ? 'over' : '') : '';
+    const lbl = p.targetHours > 0 ? 'wanted' : 'usual';
+    html += `<div class="hours-chip ${cls}">${users[uid]?.name}: <strong>${h.toFixed(1)}h</strong>${tgt ? ` <span style="color:#888;">/ ${tgt}h ${lbl}</span>` : ''}</div>`;
   });
   html += '</div>';
+  html += '<div style="font-size:11px;color:#999;margin-top:6px;">Hours are scheduled time before unpaid meal breaks. "usual" = average weekly hours from the last 8 weeks of clock-ins, used when Hrs/wk isn\'t set.</div>';
 
-  const noTargets = draft.empIds.every(uid => !getStaffPrefs(uid).targetHours);
-  if (noTargets) html += '<div style="font-size:12px;color:#888;margin-top:8px;">Tip: nobody has hours-wanted set yet. Add them on the Availability page and the draft will balance hours across the team.</div>';
+  if (draft.conflicts && draft.conflicts.length) {
+    html += `<div class="autosched-conflicts"><b>Availability doesn't match what people actually work</b> — the draft follows the Availability page, so fix these there if they're out of date:<ul>${draft.conflicts.map(x => `<li>${x}</li>`).join('')}</ul></div>`;
+  }
 
   html += `<div class="btn-row" style="margin-top:12px;">
     <button class="btn btn-gold" onclick="applyAutoSchedule()">Apply ${totalShifts} Shifts to Grid</button>
