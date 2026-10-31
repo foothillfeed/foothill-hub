@@ -1380,6 +1380,40 @@ function initInactivityTracker() {
 document.addEventListener('DOMContentLoaded', initInactivityTracker);
 
 // ══════════════════════════════════════════
+// UPDATE CHECK — tells open devices when a new Hub version is live
+// Bump HUB_BUILD on every deploy.
+// ══════════════════════════════════════════
+const HUB_BUILD = '2026-10-31.3';
+let _hubUpdateShown = false;
+async function hubCheckForUpdate() {
+  if (_hubUpdateShown) return;
+  try {
+    const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) return;
+    // Pattern is built from pieces so it can't match this line itself
+    const m = (await r.text()).match(new RegExp('const HUB_' + 'BUILD = \'([^\']+)\''));
+    if (!m || m[1] === HUB_BUILD) return;
+    // Nobody signed in (sitting on the login screen) — just reload quietly
+    const onLogin = document.getElementById('loginScreen')?.classList.contains('active');
+    if (onLogin && !currentUser && !pinBuffer) { location.reload(); return; }
+    hubShowUpdateBar();
+  } catch (e) { /* offline — try again later */ }
+}
+function hubShowUpdateBar() {
+  _hubUpdateShown = true;
+  const bar = document.createElement('div');
+  bar.id = 'hub-update-bar';
+  bar.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:3000;background:#2D5233;color:white;padding:12px 18px;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,0.25);display:flex;align-items:center;gap:14px;font-size:14px;font-family:\'DM Sans\',sans-serif;max-width:calc(100% - 32px);';
+  bar.innerHTML = '<span>\u2728 A new version of the Hub is ready.</span>' +
+    '<button onclick="location.reload()" style="background:white;color:#2D5233;border:none;border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer;white-space:nowrap;">Tap to refresh</button>';
+  document.body.appendChild(bar);
+}
+document.addEventListener('DOMContentLoaded', () => {
+  setInterval(hubCheckForUpdate, 5 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) hubCheckForUpdate(); });
+});
+
+// ══════════════════════════════════════════
 // SUPABASE CLIENT
 // ══════════════════════════════════════════
 const { createClient } = supabase;
