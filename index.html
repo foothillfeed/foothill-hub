@@ -1402,7 +1402,7 @@ document.addEventListener('DOMContentLoaded', initInactivityTracker);
 // UPDATE CHECK — tells open devices when a new Hub version is live
 // Bump HUB_BUILD on every deploy.
 // ══════════════════════════════════════════
-const HUB_BUILD = '2026-10-31.4';
+const HUB_BUILD = '2026-10-31.5';
 let _hubUpdateShown = false;
 async function hubCheckForUpdate() {
   if (_hubUpdateShown) return;
@@ -5658,11 +5658,18 @@ let _availOverrides = null; // null = not loaded yet
 // Scheduling preferences per employee (stored alongside availability in ff_availability)
 // { uid: { targetHours, maxDays, canOpen, canClose, fillOnly } }
 let _staffPrefs = {};
-const PREF_DEFAULTS = { targetHours: 0, maxDays: 5, canOpen: true, canClose: true, fillOnly: false };
+const PREF_DEFAULTS = { targetHours: 0, maxDays: 5, canOpen: true, canClose: true, fillOnly: false, minor: false };
 
 function getStaffPrefs(uid) {
-  return Object.assign({}, PREF_DEFAULTS, _staffPrefs[uid] || {});
+  const minors = ((_cache.soSettings || {})['sched_minors']) || [];
+  return Object.assign({}, PREF_DEFAULTS, _staffPrefs[uid] || {}, { minor: minors.includes(uid) });
 }
+
+// Under-18 staff: the auto-scheduler never gives them overtime (over 8 worked hrs/day or 40/week).
+// Managers can still add longer shifts by hand in an emergency — the shift editor warns.
+const MINOR_MAX_SPAN = 510;  // 8.5h on the clock = 8h worked after the 30-min meal break
+const MINOR_MAX_WEEK = 40;
+function workedHrs(spanMins) { return (spanMins > 360 ? spanMins - 30 : spanMins) / 60; }
 
 function getAvailability() {
   return _availOverrides || AVAILABILITY;
@@ -5719,7 +5726,8 @@ function renderAvailabilityEditor() {
     <th class="pref-col" title="Maximum days per week">Max days</th>
     <th class="pref-col" title="Has keys and can open. People without keys can still work the opening shift alongside a key holder.">Open 🔑</th>
     <th class="pref-col" title="Has keys and can lock up. People without keys can still work until close alongside a key holder.">Close 🔑</th>
-    <th class="pref-col" title="Only schedule when nobody else can cover (on-call)">Fill-in only</th>`;
+    <th class="pref-col" title="Only schedule when nobody else can cover (on-call)">Fill-in only</th>
+    <th class="pref-col" title="Under 18 — the auto-scheduler won't give them overtime (over 8 hrs/day or 40/week)">Under 18</th>`;
   thead += '</tr></thead>';
 
   // Body
@@ -5767,7 +5775,8 @@ function renderAvailabilityEditor() {
       <td class="pref-cell"><input type="number" class="pref-num" id="pref-days-${uid}" min="0" max="7" step="1" value="${pref.maxDays}"></td>
       <td class="pref-cell"><input type="checkbox" class="pref-check" id="pref-open-${uid}" ${pref.canOpen?'checked':''}></td>
       <td class="pref-cell"><input type="checkbox" class="pref-check" id="pref-close-${uid}" ${pref.canClose?'checked':''}></td>
-      <td class="pref-cell"><input type="checkbox" class="pref-check" id="pref-fill-${uid}" ${pref.fillOnly?'checked':''}></td>`;
+      <td class="pref-cell"><input type="checkbox" class="pref-check" id="pref-fill-${uid}" ${pref.fillOnly?'checked':''}></td>
+      <td class="pref-cell"><input type="checkbox" class="pref-check" id="pref-minor-${uid}" ${pref.minor?'checked':''}></td>`;
     tbody += '</tr>';
   });
   tbody += '</tbody>';
@@ -5834,6 +5843,10 @@ async function saveAvailability() {
   // Update in-memory availability + prefs
   _availOverrides = newAvail;
   Object.assign(_staffPrefs, newPrefs);
+  const minors = allEmps.filter(uid => document.getElementById('pref-minor-' + uid)?.checked);
+  if (!_cache.soSettings) _cache.soSettings = {};
+  _cache.soSettings['sched_minors'] = minors;
+  try { await saveSoSettings('sched_minors', minors); } catch (e) { console.error('sched_minors save', e); }
 
   // Patch the AVAILABILITY object so getAvailNote uses new data
   Object.keys(newAvail).forEach(uid => {
@@ -5926,6 +5939,8 @@ function checkShiftVsAvail(uid, dow, startTime, endTime) {
   if (!avail.available) return `Not available (${avail.note})`;
   if (avail.earliest && startTime < avail.earliest) return `Can't start before ${fmtTime12(avail.earliest)} (${avail.note})`;
   if (avail.latest && endTime > avail.latest) return `Must end by ${fmtTime12(avail.latest)} (${avail.note})`;
+  if (getStaffPrefs(uid).minor && startTime && endTime && toMin(endTime) - toMin(startTime) > MINOR_MAX_SPAN)
+    return `Under 18 — this is over 8 hours worked (overtime). Emergencies only.`;
   return null;
 }
 
@@ -6391,6 +6406,7 @@ function buildSchedSystem(clockPatterns) {
     if (!p.canOpen) prefBits.push('no keys — can work the opening shift only alongside a key holder');
     if (!p.canClose) prefBits.push('no keys — can work until close only alongside a key holder');
     if (p.fillOnly) prefBits.push('FILL-IN ONLY — schedule only to cover a gap');
+    if (p.minor) prefBits.push('UNDER 18 — never over 8 worked hrs/day (max 8.5h on the clock incl. meal) or 40/week');
     availLines += '- ' + user.name + ' (' + user.role + (prefBits.length ? '; ' + prefBits.join(', ') : '') + '): ' + lines.join(', ') + '\n';
   });
 
@@ -6876,13 +6892,17 @@ function scoreShift(uid, ctx, sMin, eMin, state, cov, learned) {
   return { score, deficitCovered, deficitSlots, overCovered };
 }
 
+function draftWorkedHrs(uid, days) {
+  return days.reduce((a, ctx) => a + (ctx.assigned[uid] || []).reduce((b, s) => b + workedHrs(toMin(s.end) - toMin(s.start)), 0), 0);
+}
+
 function generateWeekSchedule(dates, cov) {
   const users = getUsers();
   const empIds = Object.keys(users).filter(uid => users[uid] && users[uid].active !== false);
   const tpl = cov.useTemplate ? (cov.template || getSchedTemplate()) : null;
   const days = dates.map(d => buildDayContext(d, cov, cov.keepExisting, empIds, tpl)).filter(Boolean);
   const learned = learnStaffPatterns(((tpl && tpl.exclude) || SCHED_DEFAULT_TEMPLATE.exclude));
-  const state = { hours: {}, days: {} };
+  const state = { hours: {}, days: {}, dayList: days };
   // Seed with kept shifts
   days.forEach(ctx => Object.entries(ctx.assigned).forEach(([uid, shifts]) => {
     shifts.forEach(s => { state.hours[uid] = (state.hours[uid] || 0) + shiftMins(s.start, s.end) / 60; });
@@ -6918,11 +6938,14 @@ function generateWeekSchedule(dates, cov) {
           const remaining = Math.max(minLen, Math.round((tgt - (state.hours[uid] || 0)) * 60 / SLOT) * SLOT);
           if (!deficit) lenCap = Math.min(maxLen, remaining);
         }
+        if (pref.minor) lenCap = Math.min(lenCap, MINOR_MAX_SPAN);
+        const minorWeek = pref.minor ? draftWorkedHrs(uid, days) : 0;
         // If someone's availability window is shorter than the min shift, allow a shift that fills the window
         const effMin = Math.min(minLen, Math.floor((w.e - w.s) / SLOT) * SLOT);
         for (let s = w.s; s + effMin <= w.e; s += SLOT) {
           for (let len = effMin; len <= lenCap && s + len <= w.e; len += SLOT) {
             const e = s + len;
+            if (pref.minor && minorWeek + workedHrs(len) > MINOR_MAX_WEEK) continue;
             const r = scoreShift(uid, ctx, s, e, state, cov, learned);
             if (deficit && r.deficitSlots === 0) continue;
             // Coverage holes come first: a shift that plugs a real hole gets a +6 priority
@@ -6959,6 +6982,8 @@ function generateWeekSchedule(dates, cov) {
           const w = availWindow(uid, ctx);
           if (!w) continue;
           const pref = getStaffPrefs(uid);
+          if (pref.minor && ((e - s) + SLOT > MINOR_MAX_SPAN ||
+              draftWorkedHrs(uid, days) - workedHrs(e - s) + workedHrs(e - s + SLOT) > MINOR_MAX_WEEK)) continue;
           if (e === t && t + SLOT <= w.e && (t + SLOT !== ctx.close || pref.canClose || keyHolderAt(ctx, 'close'))) {
             sh.end = fromMin(t + SLOT); addCoverage(ctx.coverage, ctx.open, t, t + SLOT);
           } else if (s === t + SLOT && t >= w.s && (t !== ctx.open || pref.canOpen || keyHolderAt(ctx, 'open'))) {
@@ -7001,7 +7026,18 @@ function generateWeekSchedule(dates, cov) {
     if (ranges.length || unfilled.length || keys.length) gaps.push({ dStr: ctx.dStr, dow: ctx.dow, ranges, unfilled, keys });
   });
   const conflicts = availabilityConflicts(learned, empIds);
-  return { result, gaps, hours: state.hours, days: state.days, dayCtx: days, empIds, learned, conflicts, tpl };
+  const minorWarnings = [];
+  const DAYN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  empIds.filter(uid => getStaffPrefs(uid).minor).forEach(uid => {
+    const name = getUsers()[uid]?.name || uid;
+    days.forEach(ctx => (ctx.assigned[uid] || []).forEach(sh => {
+      const span = toMin(sh.end) - toMin(sh.start);
+      if (span > MINOR_MAX_SPAN) minorWarnings.push(`${name} ${DAYN[ctx.dow]} ${fmtTime12(sh.start)}–${fmtTime12(sh.end)} is ${workedHrs(span).toFixed(1)} hrs worked — over 8 (kept from the grid).`);
+    }));
+    const wk = draftWorkedHrs(uid, days);
+    if (wk > MINOR_MAX_WEEK) minorWarnings.push(`${name} is at ${wk.toFixed(1)} worked hrs this week — over 40.`);
+  });
+  return { result, gaps, hours: state.hours, days: state.days, dayCtx: days, empIds, learned, conflicts, minorWarnings, tpl };
 }
 
 // ── STORE SHIFT TEMPLATE ──
@@ -7156,8 +7192,14 @@ function scoreTemplateSlot(uid, ctx, slot, state, cov, learned, ignoreKeys) {
   const w = availWindow(uid, ctx);
   if (!w) return null;
   const sS = toMin(slot.start), sE = toMin(slot.end);
-  const s = Math.max(sS, w.s), e = Math.min(sE, w.e);
+  let s = Math.max(sS, w.s), e = Math.min(sE, w.e);
+  if (pref.minor && e - s > MINOR_MAX_SPAN) {
+    // keep the end of a closing shift, the start of anything else
+    if (sE === ctx.close) s = e - MINOR_MAX_SPAN; else e = s + MINOR_MAX_SPAN;
+  }
   const len = e - s, slotLen = sE - sS;
+  const minorTrim = pref.minor ? Math.max(0, (Math.min(sE, w.e) - Math.max(sS, w.s)) - len) : 0;
+  if (pref.minor && state.dayList && draftWorkedHrs(uid, state.dayList) + workedHrs(len) > MINOR_MAX_WEEK) return null;
   // must cover most of the shift (they can be trimmed to availability, holes get topped up later)
   if (len < Math.min(slotLen, Math.max(120, slotLen * 0.6))) return null;
   const isOpen = sS === ctx.open, isClose = sE === ctx.close;
@@ -7165,6 +7207,7 @@ function scoreTemplateSlot(uid, ctx, slot, state, cov, learned, ignoreKeys) {
                       (isClose && !pref.canClose && !keyHolderAt(ctx, 'close')))) return null;
   let score = 0;
   score += (len / slotLen) * 2;                        // covers the whole shift
+  score -= (minorTrim / 30) * 2;                       // under-18 trimmed to 8 hrs leaves a hole — prefer a shift they fit
   const L = learned[uid], d = L && L.dow[ctx.dow];
   if (d) {
     score += d.freq * 4;                               // usually works this weekday
@@ -7199,6 +7242,7 @@ function assignTemplateSlots(days, state, cov, empIds, tpl, learned, includeOpti
     if (hit) {
       o.ctx.slotFill = o.ctx.slotFill || {}; o.ctx.slotOwner = o.ctx.slotOwner || {};
       o.ctx.slotFill[o.i] = hit[0]; o.ctx.slotOwner[hit[0]] = o.i;
+      o.ctx.slotKept = o.ctx.slotKept || {}; o.ctx.slotKept[o.i] = true;
       open.splice(open.indexOf(o), 1);
     }
   });
@@ -7239,6 +7283,48 @@ function assignTemplateSlots(days, state, cov, empIds, tpl, learned, includeOpti
     state.hours[c.uid] = (state.hours[c.uid] || 0) + (c.e - c.s) / 60;
     state.days[c.uid] = (state.days[c.uid] || 0) + 1;
     open.splice(open.indexOf(o), 1);
+  }
+  if (!includeOptional) improveTemplateBySwaps(days, state, cov, tpl, learned);
+}
+
+// Filling shifts best-first can leave an obviously better arrangement on the table
+// (e.g. an adult takes the 10–6 and an under-18 gets trimmed off the 9–6). Try swapping
+// each pair of people on the same day and keep any swap that scores better overall.
+function improveTemplateBySwaps(days, state, cov, tpl, learned) {
+  const sub = (ctx, s, e) => { for (let i = 0; i < ctx.coverage.length; i++) { const t = ctx.open + i * SLOT; if (t >= s && t < e) ctx.coverage[i]--; } };
+  const take = (ctx, uid) => { const sh = ctx.assigned[uid][0]; const s = toMin(sh.start), e = toMin(sh.end);
+    delete ctx.assigned[uid]; sub(ctx, s, e); state.hours[uid] -= (e - s) / 60; state.days[uid]--; return sh; };
+  const put = (ctx, uid, s, e, note) => { ctx.assigned[uid] = [{ start: fromMin(s), end: fromMin(e), note }];
+    addCoverage(ctx.coverage, ctx.open, s, e); state.hours[uid] = (state.hours[uid] || 0) + (e - s) / 60; state.days[uid] = (state.days[uid] || 0) + 1; };
+  for (let pass = 0; pass < 3; pass++) {
+    let changed = false;
+    days.forEach(ctx => {
+      const slots = tpl.days[ctx.dow] || [];
+      const filled = Object.entries(ctx.slotFill || {}).map(([i, uid]) => ({ i: +i, uid }))
+        .filter(x => !(ctx.slotKept && ctx.slotKept[x.i]) && ctx.assigned[x.uid]);
+      for (let a = 0; a < filled.length; a++) for (let b = a + 1; b < filled.length; b++) {
+        const X = filled[a], Y = filled[b];
+        if (!ctx.assigned[X.uid] || !ctx.assigned[Y.uid]) continue;
+        const keyOpen = keyHolderAt(ctx, 'open'), keyClose = keyHolderAt(ctx, 'close');
+        const shX = take(ctx, X.uid), shY = take(ctx, Y.uid);
+        const cx = scoreTemplateSlot(X.uid, ctx, slots[X.i], state, cov, learned, true);
+        const cy = scoreTemplateSlot(Y.uid, ctx, slots[Y.i], state, cov, learned, true);
+        const sx = scoreTemplateSlot(X.uid, ctx, slots[Y.i], state, cov, learned, true);
+        const sy = scoreTemplateSlot(Y.uid, ctx, slots[X.i], state, cov, learned, true);
+        const cur = (cx ? cx.score : -50) + (cy ? cy.score : -50);
+        if (sx && sy && sx.score + sy.score > cur + 0.05) {
+          put(ctx, X.uid, sx.s, sx.e, slots[Y.i].label || ''); put(ctx, Y.uid, sy.s, sy.e, slots[X.i].label || '');
+          if ((keyOpen && !keyHolderAt(ctx, 'open')) || (keyClose && !keyHolderAt(ctx, 'close'))) {
+            take(ctx, X.uid); take(ctx, Y.uid);
+          } else {
+            ctx.slotFill[Y.i] = X.uid; ctx.slotFill[X.i] = Y.uid; ctx.slotOwner[X.uid] = Y.i; ctx.slotOwner[Y.uid] = X.i;
+            X.i = [Y.i, Y.i = X.i][0]; changed = true; continue;
+          }
+        }
+        put(ctx, X.uid, toMin(shX.start), toMin(shX.end), shX.note); put(ctx, Y.uid, toMin(shY.start), toMin(shY.end), shY.note);
+      }
+    });
+    if (!changed) break;
   }
 }
 
@@ -7348,6 +7434,9 @@ function renderAutoSchedPreview(draft, cov) {
   html += '</div>';
   html += '<div style="font-size:11px;color:#999;margin-top:6px;">Hours are scheduled time before unpaid meal breaks. "usual" = average weekly hours from the last 8 weeks of clock-ins, used when Hrs/wk isn\'t set.</div>';
 
+  if (draft.minorWarnings && draft.minorWarnings.length) {
+    html += `<div class="autosched-conflicts"><b>Under-18 overtime</b> — only for emergencies:<ul>${draft.minorWarnings.map(x => `<li>${x}</li>`).join('')}</ul></div>`;
+  }
   if (draft.conflicts && draft.conflicts.length) {
     html += `<div class="autosched-conflicts"><b>Availability doesn't match what people actually work</b> — the draft follows the Availability page, so fix these there if they're out of date:<ul>${draft.conflicts.map(x => `<li>${x}</li>`).join('')}</ul></div>`;
   }
