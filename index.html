@@ -612,8 +612,10 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
         </div>
         <div id="msg-reply-preview" style="display:none;"></div>
         <textarea class="form-input" id="msg-body" rows="3" placeholder="Type your message…" style="width:100%;resize:vertical;"></textarea>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;">
-          <div id="msg-send-status" style="font-size:13px;min-height:18px;"></div>
+        <div id="msg-photo-strip" style="display:none;gap:8px;flex-wrap:wrap;margin-top:10px;"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:10px;">
+          <label id="msg-photo-btn" class="btn btn-sm btn-outline" style="cursor:pointer;">📷 Add Photo<input type="file" accept="image/*" multiple style="display:none" onclick="msgPickerOpened()" oncancel="window._ddPickerAt=0;msgClearDraft()" onchange="msgAddPhotos(this)"></label>
+          <div id="msg-send-status" style="font-size:13px;min-height:18px;margin-left:auto;"></div>
           <button class="btn btn-primary" onclick="sendMessage()">Send Message</button>
         </div>
       </div>
@@ -1466,7 +1468,7 @@ async function loadAllData(uid) {
       if (u.active !== false) _cache.users[u.uid] = rec;
     });
 
-    _cache.messages = (messages || []).map(m => ({ id:m.msg_id, fromUid:m.from_uid, fromName:m.from_name, toUid:m.to_uid||'', body:m.body, urgent:!!m.urgent, readBy:m.read_by||[], archived:!!m.archived, createdAt:m.created_at }));
+    _cache.messages = (messages || []).map(msgFromRow);
 
     _cache.tasks = tasks.map(t => ({ id:t.task_id, text:t.task_text, priority:t.priority, assignee:t.assignee||'', done:t.done, date:t.date, recId:t.rec_id||'', addedBy:t.added_by, addedAt:t.added_at, doneBy:t.done_by, doneAt:t.done_at }));
 
@@ -1860,6 +1862,11 @@ async function launchApp() {
   // Check weekly summary after a short delay
   setTimeout(checkShowWeeklySummary, 1200);
   ddResumeAfterReload();
+  if (msgRestoreDraft()) {
+    document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === 'messages'));
+    showPage('messages');
+    setTimeout(() => alert('The iPad reloaded when the camera opened. Your message is still here \u2014 tap \ud83d\udcf7 Add Photo \u2192 Photo Library and pick the photo you just took.'), 300);
+  }
   checkAnthropicKey();
   // Start inactivity timer
   resetInactivityTimer();
@@ -2597,10 +2604,91 @@ let msgToEveryone = true;
 let selectedRecipients = new Set();
 let replyingTo = null;
 
+function msgFromRow(m) {
+  return { id:m.msg_id, fromUid:m.from_uid, fromName:m.from_name, toUid:m.to_uid||'', body:m.body, urgent:!!m.urgent, readBy:m.read_by||[], archived:!!m.archived, createdAt:m.created_at, replyTo:m.reply_to||null, photoCount:m.photo_count||0 };
+}
+
+// ── Message photos (stored in ff_message_photos, loaded only when shown) ──
+let msgComposePhotos = [];           // data URLs waiting to be sent
+const _msgPhotoCache = {};           // msg_id -> [dataUrl]
+const _msgPhotoLoading = {};
+const MSG_DRAFT_KEY = 'ff_msg_draft';
+
+async function msgAddPhotos(input) {
+  window._ddPickerAt = 0;
+  if (!input.files || !input.files.length) return;
+  const files = Array.from(input.files).slice(0, 4 - msgComposePhotos.length);
+  let failed = 0;
+  for (const f of files) {
+    const p = await ddCompressPhoto(f, 1280, 0.7);
+    if (p) msgComposePhotos.push(p); else failed++;
+  }
+  input.value = '';
+  msgClearDraft();
+  renderMsgComposePhotos();
+  if (failed) alert('Couldn\u2019t read ' + failed + ' photo' + (failed > 1 ? 's' : '') + '. Try choosing it from your photo library instead.');
+}
+function msgRemovePhoto(i) { msgComposePhotos.splice(i, 1); renderMsgComposePhotos(); }
+function renderMsgComposePhotos() {
+  const el = document.getElementById('msg-photo-strip'); if (!el) return;
+  el.innerHTML = msgComposePhotos.map((p, i) => '<div style="position:relative;"><img src="' + p + '" style="width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid #ddd;"><span onclick="msgRemovePhoto(' + i + ')" style="position:absolute;top:-6px;right:-6px;background:#c0392b;color:white;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;cursor:pointer;">\u2715</span></div>').join('');
+  el.style.display = msgComposePhotos.length ? 'flex' : 'none';
+  const btn = document.getElementById('msg-photo-btn');
+  if (btn) btn.style.display = msgComposePhotos.length >= 4 ? 'none' : '';
+}
+// Older iPads can reload when the camera opens — keep the typed message so it isn't lost
+function msgPickerOpened() {
+  window._ddPickerAt = Date.now();
+  try {
+    const body = (document.getElementById('msg-body') || {}).value || '';
+    localStorage.setItem(MSG_DRAFT_KEY, JSON.stringify({ uid: currentUser && currentUser.id, body: body, at: Date.now() }));
+  } catch (e) {}
+}
+function msgClearDraft() { try { localStorage.removeItem(MSG_DRAFT_KEY); } catch (e) {} }
+function msgRestoreDraft() {
+  try {
+    const d = JSON.parse(localStorage.getItem(MSG_DRAFT_KEY) || 'null');
+    msgClearDraft();
+    if (!d || !currentUser || d.uid !== currentUser.id || Date.now() - d.at > 15 * 60 * 1000) return false;
+    const ta = document.getElementById('msg-body');
+    if (ta && d.body && !ta.value) ta.value = d.body;
+    return true;
+  } catch (e) { return false; }
+}
+
+function msgPhotoThumbs(m) {
+  if (!m.photoCount) return '';
+  const photos = _msgPhotoCache[m.id];
+  if (!photos) {
+    msgLoadPhotos(m.id);
+    return '<div style="font-size:12px;color:#aaa;margin-top:6px;">\ud83d\udcf7 Loading ' + m.photoCount + ' photo' + (m.photoCount > 1 ? 's' : '') + '\u2026</div>';
+  }
+  if (!photos.length) return '<div style="font-size:12px;color:#aaa;margin-top:6px;">\ud83d\udcf7 Photo unavailable</div>';
+  return '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">' + photos.map((p, i) =>
+    '<img src="' + p + '" onclick="msgViewPhoto(\'' + m.id + '\',' + i + ')" style="width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid #ddd;cursor:pointer;">').join('') + '</div>';
+}
+async function msgLoadPhotos(msgId) {
+  if (_msgPhotoLoading[msgId]) return;
+  _msgPhotoLoading[msgId] = true;
+  const { data, error } = await sb.from('ff_message_photos').select('data,idx').eq('msg_id', msgId).order('idx');
+  _msgPhotoCache[msgId] = error ? [] : (data || []).map(r => r.data);
+  if (error) console.error('msgLoadPhotos', error);
+  const pg = document.getElementById('page-messages');
+  if (pg && pg.classList.contains('active')) renderMessages();
+}
+function msgViewPhoto(msgId, i) {
+  const src = (_msgPhotoCache[msgId] || [])[i]; if (!src) return;
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:2000;display:flex;align-items:center;justify-content:center;padding:16px;cursor:zoom-out;';
+  ov.innerHTML = '<img src="' + src + '" style="max-width:100%;max-height:100%;border-radius:6px;"><div style="position:absolute;top:14px;right:18px;color:white;font-size:28px;">\u2715</div>';
+  ov.onclick = () => ov.remove();
+  document.body.appendChild(ov);
+}
+
 async function refreshMessages() {
   try {
     const rows = await sbGet('ff_messages');
-    _cache.messages = (rows || []).map(m => ({ id:m.msg_id, fromUid:m.from_uid, fromName:m.from_name, toUid:m.to_uid||'', body:m.body, urgent:!!m.urgent, readBy:m.read_by||[], archived:!!m.archived, createdAt:m.created_at, replyTo:m.reply_to||null }));
+    _cache.messages = (rows || []).map(msgFromRow);
   } catch(e) { console.error('refreshMessages failed', e); }
 }
 
@@ -2769,6 +2857,7 @@ function renderMessages() {
           </div>
           ${orig ? `<div style="font-size:12px;color:#999;border-left:2px solid var(--border);padding-left:8px;margin-bottom:6px;">↩ ${orig.fromName}: "${escapeMsgHtml(orig.body.slice(0,80))}${orig.body.length>80?'…':''}"</div>` : ''}
           <div style="font-size:14px;white-space:pre-wrap;word-break:break-word;">${escapeMsgHtml(m.body)}</div>
+          ${msgPhotoThumbs(m)}
           <div style="display:flex;justify-content:flex-end;gap:14px;margin-top:4px;">
             <button class="btn btn-sm" style="background:none;border:none;color:#bbb;cursor:pointer;font-size:12px;" onclick="startReply('${m.id}')">↩ Reply</button>
             ${canArchive(m) ? `<button class="btn btn-sm" style="background:none;border:none;color:#bbb;cursor:pointer;font-size:12px;" onclick="archiveMessage('${m.id}')">✓ Done / Archive</button>` : ''}
@@ -2793,6 +2882,7 @@ function renderMessages() {
           </div>
           ${orig ? `<div style="font-size:12px;color:#999;border-left:2px solid var(--border);padding-left:8px;margin-bottom:6px;">↩ ${orig.fromName}: "${escapeMsgHtml(orig.body.slice(0,80))}${orig.body.length>80?'…':''}"</div>` : ''}
           <div style="font-size:14px;white-space:pre-wrap;word-break:break-word;">${escapeMsgHtml(m.body)}</div>
+          ${msgPhotoThumbs(m)}
           <div style="font-size:12px;color:${readers.length?'#27ae60':'#bbb'};margin-top:5px;">${readers.length ? '✓ Seen by ' + readers.join(', ') : 'Not seen yet'}</div>
           <div style="text-align:right;"><button class="btn btn-sm" style="background:none;border:none;color:#bbb;cursor:pointer;font-size:12px;" onclick="archiveMessage('${m.id}')">Archive</button></div>
         </div>`;
@@ -2811,21 +2901,40 @@ async function sendMessage() {
   const toUid = (msgToEveryone || selectedRecipients.size === 0) ? '' : [...selectedRecipients].join(',');
   const urgent = document.getElementById('msg-urgent').checked;
   const status = document.getElementById('msg-send-status');
-  if (!body) { status.textContent = 'Type a message first.'; status.style.color = '#e07060'; return; }
+  const photos = msgComposePhotos.slice();
+  if (!body && !photos.length) { status.textContent = 'Type a message first.'; status.style.color = '#e07060'; return; }
 
   const replyToId = replyingTo ? replyingTo.id : null;
   const msg = {
     msg_id: Date.now() + '_' + currentUser.id,
     from_uid: currentUser.id, from_name: currentUser.name,
-    to_uid: toUid, body, urgent,
+    to_uid: toUid, body: body || '(photo)', urgent,
     reply_to: replyToId,
     read_by: [], archived: false,
     created_at: new Date().toISOString()
   };
-  status.textContent = 'Sending…'; status.style.color = '#888';
-  await sbUpsert('ff_messages', msg);
+  status.textContent = photos.length ? 'Uploading photo' + (photos.length > 1 ? 's' : '') + '…' : 'Sending…'; status.style.color = '#888';
+  if (photos.length) {
+    // Upload photos first — if that fails, don't send a message that says it has photos
+    const rows = photos.map((d, i) => ({ id: msg.msg_id + '_' + i, msg_id: msg.msg_id, idx: i, data: d }));
+    const { error: pErr } = await sb.from('ff_message_photos').insert(rows);
+    if (pErr) {
+      console.error('photo upload', pErr);
+      status.textContent = 'Photo didn\u2019t upload — message not sent. Check Wi-Fi and try again.'; status.style.color = '#e07060';
+      return;
+    }
+    msg.photo_count = photos.length;
+  }
+  const { error: mErr } = await sb.from('ff_messages').upsert(msg, { onConflict: 'msg_id' });
+  if (mErr) {
+    console.error('sendMessage', mErr);
+    status.textContent = 'Message didn\u2019t send. Check Wi-Fi and try again.'; status.style.color = '#e07060';
+    return;
+  }
   if (!_cache.messages) _cache.messages = [];
-  _cache.messages.push({ id:msg.msg_id, fromUid:msg.from_uid, fromName:msg.from_name, toUid:msg.to_uid, body:msg.body, urgent:msg.urgent, readBy:[], archived:false, createdAt:msg.created_at, replyTo:replyToId });
+  _cache.messages.push(msgFromRow(msg));
+  if (photos.length) _msgPhotoCache[msg.msg_id] = photos;
+  msgComposePhotos = []; renderMsgComposePhotos(); msgClearDraft();
 
   document.getElementById('msg-body').value = '';
   document.getElementById('msg-urgent').checked = false;
@@ -2875,6 +2984,7 @@ function checkUrgentMessages() {
     <div style="padding:10px 12px;border-radius:10px;margin-bottom:8px;background:#fdecea;border:1px solid #e07060;">
       <div style="font-size:13px;font-weight:500;margin-bottom:4px;">${m.fromName} · ${timeAgoMsg(m.createdAt)}</div>
       <div style="font-size:14px;white-space:pre-wrap;word-break:break-word;">${escapeMsgHtml(m.body)}</div>
+      ${m.photoCount ? `<div style="font-size:12px;color:#c0392b;margin-top:4px;">📷 ${m.photoCount} photo${m.photoCount>1?'s':''} attached — see Messages</div>` : ''}
     </div>`).join('');
   document.getElementById('urgentMsgModal').classList.add('active');
 }
@@ -7423,12 +7533,12 @@ function ddDamageStep(d) {
   renderDeliveryCheckin();
 }
 
-function ddCompressPhoto(file) {
+function ddCompressPhoto(file, maxDim, quality) {
   return new Promise(res => {
     const img = new Image();
     const url = URL.createObjectURL(file);
     img.onload = () => {
-      const max = 900;
+      const max = maxDim || 900;
       let w = img.width, h = img.height;
       if (w >= h && w > max) { h = Math.round(h * max / w); w = max; }
       else if (h > w && h > max) { w = Math.round(w * max / h); h = max; }
@@ -7436,7 +7546,7 @@ function ddCompressPhoto(file) {
       c.width = w; c.height = h;
       c.getContext('2d').drawImage(img, 0, 0, w, h);
       URL.revokeObjectURL(url);
-      res(c.toDataURL('image/jpeg', 0.65));
+      res(c.toDataURL('image/jpeg', quality || 0.65));
     };
     img.onerror = () => { URL.revokeObjectURL(url); res(null); };
     img.src = url;
@@ -7478,7 +7588,17 @@ function ddPickStash() {
 function ddClearPickStash() { try { localStorage.removeItem(DD_PICK_KEY); } catch (e) {} }
 
 function ddLoginRecoveryHint() {
-  const s = ddPickStash(); if (!s) return;
+  let s = ddPickStash();
+  if (!s) {
+    // Message draft saved when the camera opened from Messages
+    try { const d = JSON.parse(localStorage.getItem(MSG_DRAFT_KEY) || 'null'); if (d && Date.now() - d.at < 15 * 60 * 1000) s = d; } catch (e) {}
+    if (!s) return;
+    const sel0 = document.getElementById('loginName');
+    if (sel0 && sel0.querySelector('option[value="' + s.uid + '"]')) sel0.value = s.uid;
+    const err0 = document.getElementById('loginError');
+    if (err0) err0.textContent = 'The iPad reloaded while the camera was open. Enter your PIN — your message is saved.';
+    return;
+  }
   const sel = document.getElementById('loginName');
   if (sel && sel.querySelector('option[value="' + s.uid + '"]')) sel.value = s.uid;
   const err = document.getElementById('loginError');
