@@ -1450,7 +1450,7 @@ document.addEventListener('DOMContentLoaded', initInactivityTracker);
 // UPDATE CHECK — tells open devices when a new Hub version is live
 // Bump HUB_BUILD on every deploy.
 // ══════════════════════════════════════════
-const HUB_BUILD = '2026-10-31.8';
+const HUB_BUILD = '2026-10-31.9';
 let _hubUpdateShown = false;
 async function hubCheckForUpdate() {
   if (_hubUpdateShown) return;
@@ -6358,7 +6358,7 @@ function buildSheetMatrix(dates) {
 }
 
 function sheetHeader(d) { return `${d.toLocaleDateString('en-US', { weekday: 'long' })} ${d.getMonth() + 1}/${d.getDate()}`; }
-function sheetTabName(dates) { const f = d => `${d.getMonth() + 1}${d.getDate()}`; return `${f(dates[0])}-${f(dates[6])}`; }
+function sheetTabName(dates) { const f = d => `${d.getMonth() + 1}/${d.getDate()}`; return `${f(dates[0])}-${f(dates[6])}`; }
 
 function renderSheetView(dates) {
   const wrap = document.getElementById('sched-sheet-wrap');
