@@ -262,6 +262,20 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
   .autosched-week.now { background:var(--sage); color:white; }
   .autosched-week.next { background:var(--gold); color:var(--dark); }
   .schedule-grid { width:100%; border-collapse:collapse; font-size:13px; }
+  .sched-view-toggle { display:inline-flex; border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-bottom:12px; }
+  .sched-view-toggle button { font-family:'DM Sans',sans-serif; font-size:13px; padding:7px 16px; border:none; background:white; cursor:pointer; color:#555; }
+  .sched-view-toggle button.on { background:var(--dark); color:var(--cream); }
+  .ffs-toolbar { display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center; margin-bottom:10px; font-size:12px; color:#666; }
+  .ffs-toolbar label { display:flex; align-items:center; gap:5px; }
+  .ffs-scroll { overflow-x:auto; margin-bottom:16px; }
+  table.ffs { border-collapse:collapse; font-family:Arial,Helvetica,sans-serif; font-size:13px; min-width:640px; width:100%; background:white; }
+  table.ffs th, table.ffs td { border:1px solid #000; padding:5px 8px; text-align:center; vertical-align:bottom; height:22px; }
+  table.ffs th { background:#1B4F72; color:#fff; font-weight:bold; white-space:nowrap; }
+  table.ffs td { white-space:nowrap; }
+  table.ffs td.ffs-time, table.ffs th:first-child { position:sticky; left:0; z-index:1; }
+  table.ffs td.ffs-time { background:#2E86C1; color:#fff; white-space:nowrap; }
+  table.ffs tr.ffs-alt td:not(.ffs-time) { background:#E0F7FA; }
+  table.ffs td.ffs-me { font-weight:bold; }
   .schedule-grid th { background:var(--dark); color:var(--gold); padding:10px 8px; text-align:center; font-size:11px; letter-spacing:1px; text-transform:uppercase; font-weight:500; }
   .schedule-grid td { border:1px solid var(--border); padding:6px; vertical-align:top; min-width:90px; background:white; }
   .schedule-grid td.emp-name { background:var(--dark); color:var(--cream); font-weight:500; padding:8px 12px; font-size:13px; min-width:80px; }
@@ -908,9 +922,16 @@ body { font-family:'DM Sans',sans-serif; background:var(--cream); color:var(--da
         <button class="week-btn" onclick="changeWeek(1)" title="Next week"><span class="wk-txt">Next </span>→</button>
       </div>
       <div id="sched-manager-tools"></div>
-      <div class="hours-summary" id="hours-summary"></div>
-      <div style="overflow-x:auto;">
-        <table class="schedule-grid" id="schedule-table"></table>
+      <div class="sched-view-toggle">
+        <button id="sv-sheet" onclick="setSchedView('sheet')">Schedule</button>
+        <button id="sv-grid" onclick="setSchedView('grid')">Edit grid</button>
+      </div>
+      <div id="sched-sheet-wrap"></div>
+      <div id="sched-grid-wrap">
+        <div class="hours-summary" id="hours-summary"></div>
+        <div style="overflow-x:auto;">
+          <table class="schedule-grid" id="schedule-table"></table>
+        </div>
       </div>
     </div>
 
@@ -1427,7 +1448,7 @@ document.addEventListener('DOMContentLoaded', initInactivityTracker);
 // UPDATE CHECK — tells open devices when a new Hub version is live
 // Bump HUB_BUILD on every deploy.
 // ══════════════════════════════════════════
-const HUB_BUILD = '2026-10-31.6';
+const HUB_BUILD = '2026-10-31.7';
 let _hubUpdateShown = false;
 async function hubCheckForUpdate() {
   if (_hubUpdateShown) return;
@@ -6151,12 +6172,23 @@ function renderSchedule() {
         </div>
       </div>
       <div class="btn-row" style="margin-bottom:16px;">
-        <button class="btn btn-gold" onclick="exportScheduleSheet()">Export to Google Sheets CSV</button>
+        <button class="btn btn-outline" onclick="exportScheduleSheet()">Download CSV</button>
         <button class="btn btn-outline" onclick="clearWeekSchedule()">Clear ${wkShort}</button>
       </div>`;
   } else {
     mgrEl.innerHTML = '';
   }
+
+  // Schedule (sheet-style) vs Edit grid
+  const sv = _schedView === 'grid' ? 'grid' : 'sheet';
+  document.getElementById('sv-sheet')?.classList.toggle('on', sv === 'sheet');
+  document.getElementById('sv-grid')?.classList.toggle('on', sv === 'grid');
+  const sheetWrap = document.getElementById('sched-sheet-wrap'), gridWrap = document.getElementById('sched-grid-wrap');
+  if (sheetWrap) sheetWrap.style.display = sv === 'sheet' ? '' : 'none';
+  if (gridWrap) gridWrap.style.display = sv === 'grid' ? '' : 'none';
+  const legendEl = document.getElementById('sched-legend');
+  if (legendEl) legendEl.style.display = sv === 'grid' ? 'flex' : 'none';
+  if (sv === 'sheet') renderSheetView(dates);
 
   // Hours summary — managers and leads only
   const users = getUsers();
@@ -6274,6 +6306,7 @@ function renderSchedule() {
     `;
     document.getElementById('schedule-table').parentElement.after(legend);
   }
+  if (legend) legend.style.display = (_schedView === 'grid') ? 'flex' : 'none';
 }
 
 function clearWeekSchedule() {
@@ -6285,21 +6318,114 @@ function clearWeekSchedule() {
   renderSchedule();
 }
 
+// ── SHEET VIEW: the week laid out like the "Foothill Feed Schedule" Google Sheet ──
+// Rows are hours (8:00 … 6:00, 6:30), columns are days ("Monday 11/2"). Each person appears at the hour
+// they start; two people starting together share a cell ("Joe/ Kristi"); a half-hour start is noted
+// "Joe (8:30)". Starts before 8:00 (the 7:30 pre-open opener) are listed at 8:00, as on the sheet.
+const FFS_ROWS = [480, 540, 600, 660, 720, 780, 840, 900, 960, 1020, 1080, 1110];
+let _schedView = (() => { try { return localStorage.getItem('ff_sched_view') || 'sheet'; } catch (e) { return 'sheet'; } })();
+let _ffsShowEnds = (() => { try { return localStorage.getItem('ff_sched_ends') === '1'; } catch (e) { return false; } })();
+
+function setSchedView(v) { _schedView = v; try { localStorage.setItem('ff_sched_view', v); } catch (e) {} renderSchedule(); }
+function setSheetEnds(on) { _ffsShowEnds = on; try { localStorage.setItem('ff_sched_ends', on ? '1' : '0'); } catch (e) {} renderSchedule(); }
+
+function ffsClock(mins) { const h = Math.floor(mins / 60), m = mins % 60; return `${((h + 11) % 12) + 1}${m ? ':' + String(m).padStart(2, '0') : ''}`; }
+function ffsTimeLabel(mins) { const h = Math.floor(mins / 60), m = mins % 60; return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')}`; }
+
+function buildSheetMatrix(dates) {
+  const people = Object.assign({}, _cache.allUsers || {}, getUsers());
+  const cols = dates.map(d => {
+    const dStr = dateKey(d), dow = d.getDay();
+    const close = STORE_HOURS[dow] ? toMin(STORE_HOURS[dow].close) : 1110;
+    const cells = FFS_ROWS.map(() => []);
+    Object.keys(people).forEach(uid => {
+      getShiftsForDay(uid, dStr).forEach(s => {
+        if (!s.start || !s.end) return;
+        const st = toMin(s.start), en = toMin(s.end);
+        let row = FFS_ROWS.length - 1;
+        for (let i = 0; i < FFS_ROWS.length; i++) { if (st < (FFS_ROWS[i + 1] ?? 9999)) { row = i; break; } }
+        let label = people[uid]?.name || uid;
+        if (st >= 480 && st !== FFS_ROWS[row]) label += ` (${ffsClock(st)})`;
+        if (_ffsShowEnds && en < close) label += ` - out by ${ffsClock(en)}`;
+        cells[row].push({ st, label, uid });
+      });
+    });
+    return cells.map(list => list.sort((a, b) => a.st - b.st || a.label.localeCompare(b.label)));
+  });
+  return cols;
+}
+
+function sheetHeader(d) { return `${d.toLocaleDateString('en-US', { weekday: 'long' })} ${d.getMonth() + 1}/${d.getDate()}`; }
+function sheetTabName(dates) { const f = d => `${d.getMonth() + 1}${d.getDate()}`; return `${f(dates[0])}-${f(dates[6])}`; }
+
+function renderSheetView(dates) {
+  const wrap = document.getElementById('sched-sheet-wrap');
+  if (!wrap) return;
+  const cols = buildSheetMatrix(dates);
+  const me = currentUser && currentUser.id;
+  let html = `<div class="ffs-toolbar">
+    <button class="btn btn-gold" onclick="copySheetForGoogle()">Copy for Google Sheets</button>
+    <span>Tab name: <b>${sheetTabName(dates)}</b></span>
+    <label><input type="checkbox" ${_ffsShowEnds ? 'checked' : ''} onchange="setSheetEnds(this.checked)"> Show "out by" times</label>
+    <span id="ffs-msg"></span>
+  </div><div class="ffs-scroll"><table class="ffs" id="ffs-table"><thead><tr><th>Time</th>`;
+  dates.forEach(d => { html += `<th>${sheetHeader(d)}</th>`; });
+  html += '</tr></thead><tbody>';
+  FFS_ROWS.forEach((t, r) => {
+    html += `<tr class="${r % 2 ? 'ffs-alt' : ''}"><td class="ffs-time">${ffsTimeLabel(t)}</td>`;
+    cols.forEach(cells => {
+      const list = cells[r];
+      const mine = list.some(x => x.uid === me);
+      html += `<td class="${mine ? 'ffs-me' : ''}">${list.map(x => x.label).join('/ ')}</td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+  wrap.innerHTML = html;
+}
+
+// Copies the week with the sheet's colors, so it can be pasted straight into a new tab
+async function copySheetForGoogle() {
+  const dates = weekDates(schedWeekOffset);
+  const cols = buildSheetMatrix(dates);
+  const B = 'border:1px solid #000000;font-family:Arial;font-size:11pt;text-align:center;vertical-align:bottom;';
+  let h = `<table style="border-collapse:collapse;"><tr><td style="${B}background:#1B4F72;color:#FFFFFF;font-weight:bold;">Time</td>`;
+  dates.forEach(d => { h += `<td style="${B}background:#1B4F72;color:#FFFFFF;font-weight:bold;">${sheetHeader(d)}</td>`; });
+  h += '</tr>';
+  const tsv = [['Time', ...dates.map(sheetHeader)].join('\t')];
+  FFS_ROWS.forEach((t, r) => {
+    const bg = r % 2 ? '#E0F7FA' : '#FFFFFF';
+    const vals = cols.map(cells => cells[r].map(x => x.label).join('/ '));
+    h += `<tr><td style="${B}background:#2E86C1;color:#FFFFFF;">${ffsTimeLabel(t)}</td>` + vals.map(v => `<td style="${B}background:${bg};">${v}</td>`).join('') + '</tr>';
+    tsv.push([ffsTimeLabel(t), ...vals].join('\t'));
+  });
+  h += '</table>';
+  const msg = document.getElementById('ffs-msg');
+  try {
+    await navigator.clipboard.write([new ClipboardItem({
+      'text/html': new Blob([h], { type: 'text/html' }),
+      'text/plain': new Blob([tsv.join('\n')], { type: 'text/plain' })
+    })]);
+    if (msg) msg.innerHTML = `<span style="color:#27ae60;">✓ Copied. In the Foothill Feed Schedule sheet, add a tab named <b>${sheetTabName(dates)}</b>, click cell A1 and paste.</span>`;
+  } catch (e) {
+    // Fallback for browsers without rich clipboard: select the on-screen table so ⌘C / Ctrl+C copies it
+    const tbl = document.getElementById('ffs-table');
+    if (tbl) { const range = document.createRange(); range.selectNode(tbl); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range); }
+    let ok = false; try { ok = document.execCommand('copy'); } catch (e2) {}
+    if (msg) msg.innerHTML = ok ? `<span style="color:#27ae60;">✓ Copied. Paste into cell A1 of a new tab named <b>${sheetTabName(dates)}</b>.</span>`
+      : '<span style="color:var(--rust);">Couldn\'t copy automatically — the table is selected; press ⌘C (Ctrl+C) to copy.</span>';
+  }
+}
+
 function exportScheduleSheet() {
   const dates = weekDates(schedWeekOffset);
   const users = getUsers();
   const empIds = Object.keys(users);
-  const fmt = d => d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
-  const header = ['Employee', ...dates.map(fmt)];
-  const rows = empIds.map(uid => {
-    const cols = dates.map(d => {
-      const shifts = getShiftsForDay(uid, dateKey(d));
-      if (shifts.length === 0) return 'Off';
-      return shifts.map(s => `${fmtTime12(s.start)}-${fmtTime12(s.end)}${s.note?' ('+s.note+')':''}`).join(' / ');
-    });
-    return [users[uid]?.name || uid, ...cols];
-  });
-  const csv = [header, ...rows].map(r => r.map(v => `"${v}"`).join(',')).join('\n');
+  // Same layout as the Foothill Feed Schedule sheet (hours down, days across)
+  const cols = buildSheetMatrix(dates);
+  const header = ['Time', ...dates.map(sheetHeader)];
+  const rows = FFS_ROWS.map((t, r) => [ffsTimeLabel(t), ...cols.map(cells => cells[r].map(x => x.label).join('/ '))]);
+  const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
   const blob = new Blob([csv], {type:'text/csv'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
